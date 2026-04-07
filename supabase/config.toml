@@ -1,0 +1,13 @@
+project_id = "qdpitjwpvmqsgshsdiab"
+
+[functions.webhook-leads]
+verify_jwt = false
+
+[functions.setup-admin]
+verify_jwt = false
+
+[functions.setup-status]
+verify_jwt = false
+
+[functions.admin-create-user]
+verify_jwt = true
