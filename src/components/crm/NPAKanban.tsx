@@ -48,7 +48,9 @@ interface NPALead {
   fase: NPAPhase;
   turma: Turma;
   ingresso_pago: boolean;
+  no_grupo: boolean;
   presente_evento: boolean;
+  esteve_no_evento: boolean;
   closer: boolean;
   follow_up_01: boolean;
   follow_up_02: boolean;
@@ -92,6 +94,35 @@ const TURMA_VIEWS: { id: TurmaView; label: string }[] = [
 
 const VALOR_MATRICULA_PADRAO = 397;
 const VALOR_MATERIAL_PADRAO  = 97;
+
+// ─── Phase → boolean flags (trigger sync_fase_npa_lead recalcula fase a partir desses campos) ──
+// Para mover um lead para uma fase, setamos o flag correspondente como true
+// e limpamos todos os flags de fases com MAIOR prioridade no trigger.
+
+function getPhasePayload(newPhase: NPAPhase): Record<string, boolean> {
+  switch (newPhase) {
+    case 'novo':
+      return { ingresso_pago: false, no_grupo: false, presente_evento: false, esteve_no_evento: false, closer: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+    case 'ingresso_pago':
+      return { ingresso_pago: true, no_grupo: false, presente_evento: false, esteve_no_evento: false, closer: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+    case 'no_grupo':
+      return { no_grupo: true, presente_evento: false, esteve_no_evento: false, closer: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+    case 'confirmado':
+      return { presente_evento: true, esteve_no_evento: false, closer: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+    case 'evento':
+      return { esteve_no_evento: true, closer: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+    case 'closer':
+      return { closer: true, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+    case 'follow_up_01':
+      return { follow_up_01: true, follow_up_02: false, follow_up_03: false, matriculado: false };
+    case 'follow_up_02':
+      return { follow_up_02: true, follow_up_03: false, matriculado: false };
+    case 'follow_up_03':
+      return { follow_up_03: true, matriculado: false };
+    case 'matricula':
+      return { matriculado: true };
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -814,41 +845,41 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
     setLeadToDelete(null);
   };
 
-  // ── Move lead — FIX DEFINITIVO ───────────────────────────────────────────
+  // ── Move lead ─────────────────────────────────────────────────────────────
+  // O banco tem trigger BEFORE UPDATE (sync_fase_npa_lead) que recalcula
+  // `fase` a partir dos campos booleanos. Não adianta setar `fase` direto —
+  // precisamos atualizar os flags booleanos corretos.
   const handleMoveLead = useCallback(async (leadId: string, newPhase: NPAPhase) => {
     const previousLeads = leadsRef.current;
 
-    // 1. Bloqueia Realtime para esse lead enquanto fazemos a mudança
+    // 1. Guard: bloqueia Realtime para esse lead durante a transição
     pendingUpdates.current.set(leadId, newPhase);
 
-    // 2. Optimistic update imediato
+    // 2. Optimistic update local imediato
     setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, fase: newPhase } : l)));
 
-    // 3. Salva no banco E pede retorno confirmado com .select()
+    // 3. Monta payload com os flags booleanos corretos para a fase desejada
+    const flagPayload = getPhasePayload(newPhase);
+
+    // 4. Salva no banco (trigger recalcula fase automaticamente) e retorna confirmado
     const { data: updated, error } = await supabase
       .from('npa_evento_leads')
-      .update({ fase: newPhase, ultima_atividade: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .update({ ...flagPayload, ultima_atividade: new Date().toISOString() })
       .eq('id', leadId)
       .select('*')
       .single();
 
     if (error || !updated) {
-      // Banco recusou — reverte
       pendingUpdates.current.delete(leadId);
-      toast.error('Erro ao mover lead' + (error ? ': ' + error.message : ' (sem retorno)'));
+      toast.error('Erro ao mover lead' + (error ? ': ' + error.message : ''));
       setLeads(previousLeads);
       return;
     }
 
-    // 4. Aplica o estado confirmado pelo banco (fonte da verdade)
-    const confirmedFase = updated.fase as NPAPhase;
-    setLeads((prev) => prev.map((l) => l.id === leadId ? { ...(updated as NPALead), fase: confirmedFase } : l));
+    // 5. Aplica o estado real retornado pelo banco
+    setLeads((prev) => prev.map((l) => l.id === leadId ? (updated as NPALead) : l));
 
-    if (confirmedFase !== newPhase) {
-      toast.warning(`Lead movido para "${confirmedFase}" pelo banco (diferente do esperado)`);
-    }
-
-    // 5. Mantém o guard por 5s para ignorar eventos Realtime atrasados
+    // 6. Guard por 5s para descartar eventos Realtime atrasados
     setTimeout(() => {
       pendingUpdates.current.delete(leadId);
     }, 5000);
