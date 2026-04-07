@@ -764,13 +764,10 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
           } else if (payload.eventType === 'UPDATE') {
             setLeads((prev) => prev.map((l) => {
               if (l.id !== updatedLead.id) return l;
-              // FIX: se há phase pendente local, preserva ela — mas aceita outros campos do DB
+              // Se há fase pendente, ignora a fase do evento Realtime
+              // (o estado correto já foi aplicado pelo handleMoveLead via .select())
               const expectedPhase = pendingUpdates.current.get(updatedLead.id);
               if (expectedPhase !== undefined) {
-                // Se o DB confirmou nossa fase, limpa o pending
-                if (updatedLead.fase === expectedPhase) {
-                  pendingUpdates.current.delete(updatedLead.id);
-                }
                 return { ...updatedLead, fase: expectedPhase };
               }
               return updatedLead;
@@ -817,32 +814,44 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
     setLeadToDelete(null);
   };
 
-  // ── Move lead — FIX PRINCIPAL ─────────────────────────────────────────────
+  // ── Move lead — FIX DEFINITIVO ───────────────────────────────────────────
   const handleMoveLead = useCallback(async (leadId: string, newPhase: NPAPhase) => {
     const previousLeads = leadsRef.current;
 
-    // 1. Registra como pendente
+    // 1. Bloqueia Realtime para esse lead enquanto fazemos a mudança
     pendingUpdates.current.set(leadId, newPhase);
 
     // 2. Optimistic update imediato
     setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, fase: newPhase } : l)));
 
-    const { error } = await supabase
+    // 3. Salva no banco E pede retorno confirmado com .select()
+    const { data: updated, error } = await supabase
       .from('npa_evento_leads')
       .update({ fase: newPhase, ultima_atividade: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', leadId);
+      .eq('id', leadId)
+      .select('*')
+      .single();
 
-    if (error) {
+    if (error || !updated) {
+      // Banco recusou — reverte
       pendingUpdates.current.delete(leadId);
-      toast.error('Erro ao mover lead');
+      toast.error('Erro ao mover lead' + (error ? ': ' + error.message : ' (sem retorno)'));
       setLeads(previousLeads);
       return;
     }
 
-    // Fallback: limpa o pending após 10s caso o evento Realtime nunca chegue
+    // 4. Aplica o estado confirmado pelo banco (fonte da verdade)
+    const confirmedFase = updated.fase as NPAPhase;
+    setLeads((prev) => prev.map((l) => l.id === leadId ? { ...(updated as NPALead), fase: confirmedFase } : l));
+
+    if (confirmedFase !== newPhase) {
+      toast.warning(`Lead movido para "${confirmedFase}" pelo banco (diferente do esperado)`);
+    }
+
+    // 5. Mantém o guard por 5s para ignorar eventos Realtime atrasados
     setTimeout(() => {
       pendingUpdates.current.delete(leadId);
-    }, 10000);
+    }, 5000);
   }, []);
 
   // ── Toggle material ───────────────────────────────────────────────────────
