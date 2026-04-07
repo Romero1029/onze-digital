@@ -306,30 +306,23 @@ function Relatorio({
   });
 
   // ── métricas reais ──
-  const valorIngressoEvento = Number(evento.valor_ingresso) || 10;
-  const totalLeads           = leads.length;
-  const ingressosPagos       = leads.filter((l) => l.ingresso_pago).length;
-  const presentesEvento      = leads.filter((l) => l.presente_evento).length;
-  const matriculados         = leads.filter((l) => l.fase === 'matricula');
-  const totalMatriculas      = matriculados.length;
-  const comprouMaterial      = leads.filter((l) => l.comprou_material).length;
+  const valorIngressoEvento = Number(evento.valor_ingresso)        || 10;
+  const valorMaterialRelatorio = Number(evento.valor_material_padrao) || VALOR_MATERIAL_PADRAO;
+  const totalLeads      = leads.length;
+  const ingressosPagos  = leads.filter((l) => l.ingresso_pago).length;
+  // esteve_no_evento = fase "Evento" (e acima); presente_evento = fase "Confirmado"
+  const presentesEvento = leads.filter((l) => l.esteve_no_evento).length;
+  const matriculados    = leads.filter((l) => l.matriculado);
+  const totalMatriculas = matriculados.length;
+  const comprouMaterial = leads.filter((l) => l.comprou_material).length;
+  const materialNoDia   = leads.filter((l) => l.esteve_no_evento && l.comprou_material).length;
 
-  const receitaIngressos = leads.reduce(
-    (acc, l) => acc + (l.ingresso_pago
-      ? (Number(l.valor_ingresso) > 0 ? Number(l.valor_ingresso) : valorIngressoEvento)
-      : 0),
-    0,
-  );
+  // Receitas: sempre usam o valor do evento como base (multiplicação direta)
+  const receitaIngressos  = ingressosPagos  * valorIngressoEvento;
   const receitaMatriculas = matriculados.reduce(
-    (acc, l) => acc + (Number(l.valor_matricula) > 0 ? Number(l.valor_matricula) : VALOR_MATRICULA_PADRAO),
-    0,
+    (acc, l) => acc + (Number(l.valor_matricula) > 0 ? Number(l.valor_matricula) : VALOR_MATRICULA_PADRAO), 0,
   );
-  const receitaMateriais = leads
-    .filter((l) => l.comprou_material)
-    .reduce(
-      (acc, l) => acc + (Number(l.valor_material) > 0 ? Number(l.valor_material) : VALOR_MATERIAL_PADRAO),
-      0,
-    );
+  const receitaMateriais  = comprouMaterial * valorMaterialRelatorio;
   const receitaTotal = receitaIngressos + receitaMatriculas + receitaMateriais;
 
   // conversões
@@ -419,7 +412,7 @@ function Relatorio({
             { label: 'Leads → Ingresso Pago', value: ingressosPagos, total: totalLeads,       color: '#f97316' },
             { label: 'Ingresso → Presente',   value: presentesEvento, total: ingressosPagos,  color: '#8b5cf6' },
             { label: 'Presente → Matrícula',  value: totalMatriculas, total: presentesEvento, color: '#16a34a' },
-            { label: 'Presente → Material',   value: comprouMaterial, total: presentesEvento, color: '#ec4899' },
+            { label: 'Evento → Material',      value: materialNoDia,   total: presentesEvento, color: '#ec4899' },
           ].map(({ label, value, total, color }) => {
             const p = pct(value, total);
             return (
@@ -569,19 +562,19 @@ function MetaTab({
   });
 
   // métricas reais
-  const valorIngressoEvento = Number(evento.valor_ingresso) || 10;
+  const valorIngressoEvento  = Number(evento.valor_ingresso)        || 10;
+  const valorMaterialEvento  = Number(evento.valor_material_padrao) || VALOR_MATERIAL_PADRAO;
   const ingressosPagos  = leads.filter((l) => l.ingresso_pago).length;
-  const presentesEvento = leads.filter((l) => l.presente_evento).length;
-  const matriculados    = leads.filter((l) => l.fase === 'matricula');
+  const presentesEvento = leads.filter((l) => l.esteve_no_evento).length;
+  const matriculados    = leads.filter((l) => l.matriculado);
   const totalMatriculas = matriculados.length;
-  const materialNoDia   = leads.filter((l) => l.presente_evento && l.comprou_material).length;
+  const comprouMaterial = leads.filter((l) => l.comprou_material).length;
+  const materialNoDia   = leads.filter((l) => l.esteve_no_evento && l.comprou_material).length;
 
-  const receitaIngressos  = leads.reduce((acc, l) =>
-    acc + (l.ingresso_pago ? (Number(l.valor_ingresso) > 0 ? Number(l.valor_ingresso) : valorIngressoEvento) : 0), 0);
+  const receitaIngressos  = ingressosPagos  * valorIngressoEvento;
   const receitaMatriculas = matriculados.reduce((acc, l) =>
     acc + (Number(l.valor_matricula) > 0 ? Number(l.valor_matricula) : VALOR_MATRICULA_PADRAO), 0);
-  const receitaMateriais  = leads.filter((l) => l.comprou_material).reduce((acc, l) =>
-    acc + (Number(l.valor_material) > 0 ? Number(l.valor_material) : VALOR_MATERIAL_PADRAO), 0);
+  const receitaMateriais  = comprouMaterial * valorMaterialEvento;
   const receitaTotal = receitaIngressos + receitaMatriculas + receitaMateriais;
 
   const mMat  = evento.meta_matriculas  ?? 0;
@@ -993,22 +986,20 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   }, [leads, turmaView, searchWhatsapp]);
 
   // ── Métricas do header ────────────────────────────────────────────────────
-  const valorIngressoEvento  = Number(evento?.valor_ingresso)       || 10;
+  const valorIngressoEvento  = Number(evento?.valor_ingresso)        || 10;
   const valorMaterialEvento  = Number(evento?.valor_material_padrao) || VALOR_MATERIAL_PADRAO;
   const totalLeads           = leads.length;
   const ingressosPagos       = leads.filter((l) => l.ingresso_pago).length;
-  const presentesEvento      = leads.filter((l) => l.presente_evento).length;
-  const matriculas           = leads.filter((l) => l.fase === 'matricula').length;
+  const presentesEvento      = leads.filter((l) => l.esteve_no_evento).length;  // fase "Evento" ou acima
+  const matriculas           = leads.filter((l) => l.matriculado).length;
   const comprouMaterial      = leads.filter((l) => l.comprou_material).length;
-  const materialNoDia        = leads.filter((l) => l.presente_evento && l.comprou_material).length;
-  const receitaIngressos     = leads.reduce((acc, l) =>
-    acc + (l.ingresso_pago ? (Number(l.valor_ingresso) > 0 ? Number(l.valor_ingresso) : valorIngressoEvento) : 0), 0);
+  const materialNoDia        = leads.filter((l) => l.esteve_no_evento && l.comprou_material).length;
+  // Receitas: sempre multiplicam pelo valor do evento (atualiza quando o valor muda)
+  const receitaIngressos     = ingressosPagos * valorIngressoEvento;
   const receitaMatriculas    = leads
-    .filter((l) => l.fase === 'matricula')
+    .filter((l) => l.matriculado)
     .reduce((acc, l) => acc + (Number(l.valor_matricula) > 0 ? Number(l.valor_matricula) : VALOR_MATRICULA_PADRAO), 0);
-  const receitaMateriais     = leads
-    .filter((l) => l.comprou_material)
-    .reduce((acc, l) => acc + (Number(l.valor_material) > 0 ? Number(l.valor_material) : valorMaterialEvento), 0);
+  const receitaMateriais     = comprouMaterial * valorMaterialEvento;
 
   // ── Render kanban ─────────────────────────────────────────────────────────
   const renderKanban = (turmaFilter?: 'manha' | 'tarde', showTitle?: boolean) => {
