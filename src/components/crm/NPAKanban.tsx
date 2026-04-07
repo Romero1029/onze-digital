@@ -717,7 +717,7 @@ function MetaTab({
 export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   const [evento, setEvento]                     = useState<NPAEvento | null>(null);
   const [leads, setLeads]                       = useState<NPALead[]>([]);
-  const [searchWhatsapp, setSearchWhatsapp]     = useState('');
+  const [searchWhatsapp, setSearchWhatsapp]     = useState(''); // usado para busca geral (nome ou whatsapp)
   const [loading, setLoading]                   = useState(true);
   const [isAddingLead, setIsAddingLead]         = useState(false);
   const [turmaView, setTurmaView]               = useState<TurmaView>('todas');
@@ -965,7 +965,10 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
       result = result.filter((l) => l.turma === 'tarde');
     }
     if (searchWhatsapp) {
-      result = result.filter((l) => l.whatsapp.toLowerCase().includes(searchWhatsapp.toLowerCase()));
+      const q = searchWhatsapp.toLowerCase();
+      result = result.filter((l) =>
+        l.nome.toLowerCase().includes(q) || l.whatsapp.toLowerCase().includes(q)
+      );
     }
     return result;
   }, [leads, turmaView, searchWhatsapp]);
@@ -1223,7 +1226,7 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
           <Input
-            placeholder="Buscar por WhatsApp..."
+            placeholder="Buscar por nome ou WhatsApp..."
             value={searchWhatsapp}
             onChange={(e) => setSearchWhatsapp(e.target.value)}
             className="pl-9 rounded-xl border-gray-200 bg-white text-sm"
