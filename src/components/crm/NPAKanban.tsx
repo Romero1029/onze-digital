@@ -33,6 +33,7 @@ interface NPAEvento {
   ativo: boolean;
   created_at: string;
   valor_ingresso?: number;
+  valor_material_padrao?: number;
   meta_matriculas?: number;
   meta_faturamento?: number;
   meta_presentes?: number;
@@ -729,6 +730,9 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   const [showEditIngressoModal, setShowEditIngressoModal] = useState(false);
   const [novoValorIngresso, setNovoValorIngresso]         = useState('');
   const [savingIngresso, setSavingIngresso]               = useState(false);
+  const [showEditMaterialModal, setShowEditMaterialModal] = useState(false);
+  const [novoValorMaterial, setNovoValorMaterial]         = useState('');
+  const [savingMaterial, setSavingMaterial]               = useState(false);
 
   // ── FIX: pendingUpdates guard contra Realtime sobrescrever optimistic ──────
   const pendingUpdates = useRef<Map<string, NPAPhase>>(new Map());
@@ -943,6 +947,21 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
     setSavingIngresso(false);
   };
 
+  // ── Salvar valor material ─────────────────────────────────────────────────
+  const handleSaveValorMaterial = async () => {
+    const valor = parseFloat(novoValorMaterial.replace(',', '.'));
+    if (isNaN(valor) || valor <= 0) { toast.error('Valor inválido'); return; }
+    setSavingMaterial(true);
+    const { error } = await supabase.from('npa_eventos').update({ valor_material_padrao: valor }).eq('id', npaEventoId);
+    if (error) { toast.error('Erro: ' + error.message); }
+    else {
+      toast.success('Valor do material atualizado!');
+      setShowEditMaterialModal(false);
+      setEvento((prev) => prev ? { ...prev, valor_material_padrao: valor } : prev);
+    }
+    setSavingMaterial(false);
+  };
+
   // ── Salvar metas ──────────────────────────────────────────────────────────
   const handleSaveMetas = async (metas: {
     meta_matriculas: number; meta_faturamento: number;
@@ -974,7 +993,8 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   }, [leads, turmaView, searchWhatsapp]);
 
   // ── Métricas do header ────────────────────────────────────────────────────
-  const valorIngressoEvento = Number(evento?.valor_ingresso) || 10;
+  const valorIngressoEvento  = Number(evento?.valor_ingresso)       || 10;
+  const valorMaterialEvento  = Number(evento?.valor_material_padrao) || VALOR_MATERIAL_PADRAO;
   const totalLeads           = leads.length;
   const ingressosPagos       = leads.filter((l) => l.ingresso_pago).length;
   const presentesEvento      = leads.filter((l) => l.presente_evento).length;
@@ -988,7 +1008,7 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
     .reduce((acc, l) => acc + (Number(l.valor_matricula) > 0 ? Number(l.valor_matricula) : VALOR_MATRICULA_PADRAO), 0);
   const receitaMateriais     = leads
     .filter((l) => l.comprou_material)
-    .reduce((acc, l) => acc + (Number(l.valor_material) > 0 ? Number(l.valor_material) : VALOR_MATERIAL_PADRAO), 0);
+    .reduce((acc, l) => acc + (Number(l.valor_material) > 0 ? Number(l.valor_material) : valorMaterialEvento), 0);
 
   // ── Render kanban ─────────────────────────────────────────────────────────
   const renderKanban = (turmaFilter?: 'manha' | 'tarde', showTitle?: boolean) => {
@@ -1170,10 +1190,20 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
         <Card className="p-4 border border-gray-100 shadow-sm rounded-xl">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs text-gray-500">Compraram Material</p>
-            <ShoppingBag className="h-4 w-4 text-pink-400" />
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { setNovoValorMaterial((evento?.valor_material_padrao ?? VALOR_MATERIAL_PADRAO).toString()); setShowEditMaterialModal(true); }}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                title="Editar valor do material"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <ShoppingBag className="h-4 w-4 text-pink-400" />
+            </div>
           </div>
           <p className="text-2xl font-bold text-gray-900">{comprouMaterial}</p>
           <p className="text-xs text-gray-400">{fmt(receitaMateriais)}</p>
+          <p className="text-[10px] text-gray-300">{fmt(valorMaterialEvento)} / un</p>
         </Card>
 
         <Card className="p-4 border border-gray-100 shadow-sm rounded-xl bg-purple-50">
@@ -1214,6 +1244,32 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
               <Button variant="outline" onClick={() => setShowEditIngressoModal(false)}>Cancelar</Button>
               <Button onClick={handleSaveValorIngresso} disabled={savingIngresso}>
                 {savingIngresso && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Salvar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar material */}
+      {showEditMaterialModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Valor do Material</h2>
+            <p className="text-sm text-gray-500 mb-4">Valor padrão do material para este evento.</p>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm text-gray-500 font-medium">R$</span>
+              <Input
+                type="number" step="0.01" min="0"
+                value={novoValorMaterial}
+                onChange={(e) => setNovoValorMaterial(e.target.value)}
+                placeholder="97,00" className="flex-1" autoFocus
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setShowEditMaterialModal(false)}>Cancelar</Button>
+              <Button onClick={handleSaveValorMaterial} disabled={savingMaterial}>
+                {savingMaterial && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                 Salvar
               </Button>
             </div>
