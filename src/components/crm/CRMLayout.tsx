@@ -16,6 +16,7 @@ import { Operacoes } from './Operacoes';
 import { ProdutividadeAvancada } from './ProdutividadeAvancada';
 import { MapaMental } from './MapaMental';
 import { Financeiro } from './Financeiro';
+import { Balanco } from './Balanco';
 import { Rodrygo } from './Rodrygo';
 import { LancamentoKanban } from './LancamentoKanban';
 import NPAKanban from './NPAKanban';
@@ -179,6 +180,7 @@ export function CRMLayout() {
       case 'chat': return <Chat />;
       case 'sheets': return <SheetsLeads />;
       case 'financeiro': return <Financeiro />;
+      case 'balanco': return <Balanco />;
       case 'rodrygo': return <Rodrygo />;
       case 'team': return user?.tipo === 'admin' ? <TeamManagement /> : <Dashboard />;
       case 'settings': return <Settings />;

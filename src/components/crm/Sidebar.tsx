@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   LayoutDashboard, Kanban, Settings, UserCog, FileSpreadsheet,
-  MessageCircle, Rocket, BarChart3, CheckSquare, ChevronDown, Plus, Brain, ListTodo,
+  MessageCircle, Rocket, BarChart3, CheckSquare, ChevronDown, Plus, Brain, ListTodo, Scale,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/dialog';
 
 export type View =
-  | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'rodrygo'
+  | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'balanco' | 'rodrygo'
   | 'lancamentos_30' | 'lancamentos_31' | 'lancamentos_32'
   | 'team' | 'settings'
   | 'operacoes_tarefas' | 'operacoes_calendario_geral' | 'operacoes_calendario_conteudo'
@@ -52,6 +52,7 @@ const MENU: MenuItem[] = [
   { key: 'chat', label: 'Chat', icon: MessageCircle },
   { key: 'sheets', label: 'Leads Sheets', icon: FileSpreadsheet },
   { key: 'financeiro', label: 'Financeiro', icon: BarChart3 },
+  { key: 'balanco', label: 'Balanço', icon: Scale },
   { key: 'team', label: 'Equipe', icon: UserCog, adminOnly: true },
   {
     group: 'operacoes', label: 'Operações', icon: ListTodo,
