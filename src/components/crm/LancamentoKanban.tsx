@@ -20,16 +20,14 @@ import { toast } from 'sonner';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type LaunchPhase =
-  | 'planilha'
-  | 'grupo_lancamento'
-  | 'grupo_oferta'
-  | 'follow_up_01'
-  | 'follow_up_02'
-  | 'follow_up_03'
-  | 'matricula';
-
 type ActiveView = 'kanban' | 'metas' | 'relatorio';
+
+interface KanbanColuna {
+  id: string;
+  lancamento_id: string;
+  nome: string;
+  ordem: number;
+}
 
 interface Launch {
   id: string;
@@ -49,7 +47,7 @@ interface LaunchLead {
   nome: string;
   whatsapp: string;
   email?: string;
-  fase: LaunchPhase;
+  fase: string; // UUID of kanban_colunas.id
   no_grupo: boolean;
   grupo_oferta: boolean;
   follow_up_01?: boolean | string;
@@ -75,23 +73,48 @@ function fmt(v: number) {
   return v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function getPhasePayload(phase: LaunchPhase): Record<string, boolean> {
-  switch (phase) {
-    case 'planilha':
-      return { no_grupo: false, grupo_oferta: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
-    case 'grupo_lancamento':
-      return { no_grupo: true, grupo_oferta: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
-    case 'grupo_oferta':
-      return { grupo_oferta: true, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
-    case 'follow_up_01':
-      return { follow_up_01: true, follow_up_02: false, follow_up_03: false, matriculado: false };
-    case 'follow_up_02':
-      return { follow_up_02: true, follow_up_03: false, matriculado: false };
-    case 'follow_up_03':
-      return { follow_up_03: true, matriculado: false };
-    case 'matricula':
-      return { matriculado: true };
-  }
+// Normalize column name for fuzzy matching
+function normColName(s: string) {
+  return s.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '_').trim();
+}
+
+// Derive boolean flag payload from a column's nome (handles custom names too)
+function getPhasePayloadByColName(nome: string): Record<string, boolean> {
+  const n = normColName(nome);
+  if (n === 'planilha')
+    return { no_grupo: false, grupo_oferta: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+  if (n.includes('grupo') && (n.includes('lancamento') || n.includes('lançamento')))
+    return { no_grupo: true, grupo_oferta: false, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+  if (n.includes('grupo') && n.includes('oferta'))
+    return { grupo_oferta: true, follow_up_01: false, follow_up_02: false, follow_up_03: false, matriculado: false };
+  if (n.includes('follow') && n.includes('01'))
+    return { follow_up_01: true, follow_up_02: false, follow_up_03: false, matriculado: false };
+  if (n.includes('follow') && n.includes('02'))
+    return { follow_up_02: true, follow_up_03: false, matriculado: false };
+  if (n.includes('follow') && n.includes('03'))
+    return { follow_up_03: true, matriculado: false };
+  if (n.includes('matricul'))
+    return { matriculado: true };
+  return {}; // Custom column — no boolean side-effects
+}
+
+// Map legacy string fase values → column UUID
+const LEGACY_FASE_NAMES: Record<string, string> = {
+  planilha:          'planilha',
+  grupo_lancamento:  'grupo lancamento',
+  grupo_oferta:      'grupo oferta',
+  follow_up_01:      'follow up 01',
+  follow_up_02:      'follow up 02',
+  follow_up_03:      'follow up 03',
+  matricula:         'matricula',
+};
+
+function resolveLegacyFase(fase: string, colunas: KanbanColuna[]): string {
+  const target = normColName(LEGACY_FASE_NAMES[fase] ?? fase.replace(/_/g, ' '));
+  const col = colunas.find(c => normColName(c.nome) === target || normColName(c.nome).includes(target));
+  return col?.id ?? colunas[0].id;
 }
 
 // ─── MetaBar ──────────────────────────────────────────────────────────────────
@@ -312,6 +335,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const { user, users } = useAuth();
   const navigate = useNavigate();
   const [lancamento, setLancamento] = useState<Launch | null>(null);
+  const [colunas, setColunas] = useState<KanbanColuna[]>([]);
   const [leads, setLeads] = useState<LaunchLead[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -323,33 +347,96 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const [editingValor, setEditingValor] = useState(false);
   const [valorInput, setValorInput] = useState('');
 
-  // Pending guard: blocks Realtime from overwriting optimistic phase updates
-  const pendingUpdates = useRef<Map<string, LaunchPhase>>(new Map());
+  // Pending guard: blocks Realtime from overwriting optimistic fase updates
+  const pendingUpdates = useRef<Map<string, string>>(new Map()); // leadId → colunaId (UUID)
   const leadsRef = useRef<LaunchLead[]>([]);
+  const colunasRef = useRef<KanbanColuna[]>([]);
   useEffect(() => { leadsRef.current = leads; }, [leads]);
+  useEffect(() => { colunasRef.current = colunas; }, [colunas]);
 
   const vinicius = users.find(u => u.nome?.toLowerCase().includes('vinicius'));
 
-  // ── Fetch lancamento ────────────────────────────────────────────────────────
+  // ── Fetch lancamento + colunas + leads ─────────────────────────────────────
   useEffect(() => {
+    if (!lancamentoId) return;
+    setLoading(true);
+
     const load = async () => {
-      setLoading(true);
-      const { data } = await supabase
+      // 1. Lancamento
+      const { data: lancData } = await supabase
         .from('lancamentos')
         .select('*')
         .eq('id', lancamentoId)
         .single();
-      if (data) setLancamento(data as Launch);
+      if (lancData) setLancamento(lancData as Launch);
+
+      // 2. Colunas kanban
+      const { data: colData } = await supabase
+        .from('kanban_colunas')
+        .select('*')
+        .eq('lancamento_id', lancamentoId)
+        .order('ordem', { ascending: true });
+      const cols = (colData ?? []) as KanbanColuna[];
+      setColunas(cols);
+      colunasRef.current = cols;
+
+      // 3. Leads
+      const { data: leadData } = await supabase
+        .from('lancamento_leads')
+        .select('*')
+        .eq('lancamento_id', lancamentoId)
+        .order('created_at', { ascending: false });
+      let loadedLeads = (leadData ?? []) as LaunchLead[];
+
+      // 4. Migrate any leads whose fase is a legacy string (not a valid column UUID)
+      if (cols.length > 0) {
+        loadedLeads = await migrateLegacyLeads(loadedLeads, cols);
+      }
+
+      setLeads(loadedLeads);
       setLoading(false);
     };
     load();
   }, [lancamentoId]);
 
-  // ── Fetch leads + Realtime ──────────────────────────────────────────────────
+  // ── Auto-migration: fix leads with legacy string fase ──────────────────────
+  const migrateLegacyLeads = async (
+    loadedLeads: LaunchLead[],
+    cols: KanbanColuna[],
+  ): Promise<LaunchLead[]> => {
+    const validIds = new Set(cols.map(c => c.id));
+    const legacy = loadedLeads.filter(l => !validIds.has(l.fase));
+    if (legacy.length === 0) return loadedLeads;
+
+    const migrated = loadedLeads.map(lead => {
+      if (validIds.has(lead.fase)) return lead;
+      const newFase = resolveLegacyFase(lead.fase, cols);
+      return { ...lead, fase: newFase };
+    });
+
+    // Batch update DB — fire and forget errors so UI is not blocked
+    await Promise.all(
+      legacy.map(lead => {
+        const newFase = (migrated.find(m => m.id === lead.id) as LaunchLead).fase;
+        return supabase
+          .from('lancamento_leads')
+          .update({ fase: newFase })
+          .eq('id', lead.id)
+          .then(({ error }) => {
+            if (error) console.warn('Migration failed for lead', lead.id, error.message);
+          });
+      })
+    );
+
+    return migrated;
+  };
+
+  // ── Realtime ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!lancamentoId) return;
 
     const load = async () => {
+      // reload leads only (columns are static within a session)
       const { data } = await supabase
         .from('lancamento_leads')
         .select('*')
@@ -357,7 +444,6 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .order('created_at', { ascending: false });
       if (data) setLeads(data as LaunchLead[]);
     };
-    load();
 
     const channel = supabase
       .channel(`launch-leads-${lancamentoId}`)
@@ -388,15 +474,18 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   }, [lancamentoId]);
 
   // ── Move lead ───────────────────────────────────────────────────────────────
-  const handleMoveLead = useCallback(async (leadId: string, newPhase: LaunchPhase) => {
+  const handleMoveLead = useCallback(async (leadId: string, colunaId: string) => {
     const previousLeads = leadsRef.current;
-    pendingUpdates.current.set(leadId, newPhase);
-    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, fase: newPhase } : l));
+    pendingUpdates.current.set(leadId, colunaId);
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, fase: colunaId } : l));
 
-    const flagPayload = getPhasePayload(newPhase);
+    // Derive boolean flags from the destination column's name
+    const coluna = colunasRef.current.find(c => c.id === colunaId);
+    const flagPayload = coluna ? getPhasePayloadByColName(coluna.nome) : {};
+
     const { data: updated, error } = await supabase
       .from('lancamento_leads')
-      .update({ ...flagPayload, fase: newPhase })
+      .update({ fase: colunaId, ...flagPayload })
       .eq('id', leadId)
       .select('*')
       .single();
@@ -415,13 +504,15 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   // ── Add lead ────────────────────────────────────────────────────────────────
   const handleAddLead = async () => {
     if (!lancamentoId || !newLeadForm.nome || !newLeadForm.whatsapp) return;
+    const primeiraColuna = colunasRef.current[0];
+    if (!primeiraColuna) { toast.error('Nenhuma coluna encontrada'); return; }
     setIsAddingLead(true);
     const { error } = await supabase.from('lancamento_leads').insert({
       lancamento_id: lancamentoId,
       nome: newLeadForm.nome,
       whatsapp: newLeadForm.whatsapp,
       email: newLeadForm.email || null,
-      fase: 'planilha',
+      fase: primeiraColuna.id,  // always UUID
       no_grupo: false,
       grupo_oferta: false,
       matriculado: false,
@@ -513,17 +604,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     );
   }, [leads, searchQuery]);
 
-  const getLeadsByPhase = (phase: LaunchPhase) => filteredLeads.filter(l => l.fase === phase);
-
-  const phases: { id: LaunchPhase; label: string }[] = [
-    { id: 'planilha', label: 'Planilha' },
-    { id: 'grupo_lancamento', label: 'Grupo Lançamento' },
-    { id: 'grupo_oferta', label: 'Grupo Oferta' },
-    { id: 'follow_up_01', label: 'Follow Up 01' },
-    { id: 'follow_up_02', label: 'Follow Up 02' },
-    { id: 'follow_up_03', label: 'Follow Up 03' },
-    { id: 'matricula', label: 'Matrícula' },
-  ];
+  const getLeadsByColuna = (colunaId: string) => filteredLeads.filter(l => l.fase === colunaId);
 
   if (loading || !lancamento) {
     return (
@@ -697,17 +778,17 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
           {/* Board */}
           <div className="overflow-x-auto">
             <div className="flex gap-4 min-w-full pb-4">
-              {phases.map(phase => (
-                <div key={phase.id} className="flex-shrink-0 w-80">
+              {colunas.map(coluna => (
+                <div key={coluna.id} className="flex-shrink-0 w-80">
                   <div className="bg-muted rounded-lg p-4 h-full">
                     <div className="sticky top-0 bg-muted pb-3 mb-3 border-b">
-                      <h3 className="font-semibold">{phase.label}</h3>
+                      <h3 className="font-semibold">{coluna.nome}</h3>
                       <Badge variant="secondary" className="text-xs mt-1">
-                        {getLeadsByPhase(phase.id).length} leads
+                        {getLeadsByColuna(coluna.id).length} leads
                       </Badge>
                     </div>
                     <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                      {getLeadsByPhase(phase.id).map(lead => (
+                      {getLeadsByColuna(coluna.id).map(lead => (
                         <div
                           key={lead.id}
                           className={`p-3 rounded-lg border ${
@@ -749,18 +830,18 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                             )}
                           </div>
 
-                          {/* Move Select */}
+                          {/* Move Select — values are column UUIDs */}
                           <Select
                             value={lead.fase}
-                            onValueChange={value => handleMoveLead(lead.id, value as LaunchPhase)}
+                            onValueChange={value => handleMoveLead(lead.id, value)}
                             disabled={lancamento.status === 'finalizado'}
                           >
                             <SelectTrigger className="mt-2 h-8 text-xs">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {phases.map(p => (
-                                <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
+                              {colunas.map(c => (
+                                <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
