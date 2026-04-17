@@ -15,6 +15,12 @@ import {
   CheckCircle2, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useKanbanColunas } from './kanban/useKanbanColunas';
+import type { KanbanColuna } from './kanban/useKanbanColunas';
+import {
+  KanbanColunaHeader, AddColunaButton,
+  RenameColunaModal, ColunaSettingsModal, DeleteColunaModal,
+} from './kanban/KanbanColunasUI';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -711,7 +717,7 @@ function MetaTab({
 export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   const [evento, setEvento]                     = useState<NPAEvento | null>(null);
   const [leads, setLeads]                       = useState<NPALead[]>([]);
-  const [searchWhatsapp, setSearchWhatsapp]     = useState(''); // usado para busca geral (nome ou whatsapp)
+  const [searchWhatsapp, setSearchWhatsapp]     = useState('');
   const [loading, setLoading]                   = useState(true);
   const [isAddingLead, setIsAddingLead]         = useState(false);
   const [turmaView, setTurmaView]               = useState<TurmaView>('todas');
@@ -720,6 +726,8 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   const [showDeleteModal, setShowDeleteModal]   = useState(false);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [leadToDelete, setLeadToDelete]         = useState<NPALead | null>(null);
+  const [editingLead, setEditingLead]           = useState<NPALead | null>(null);
+  const [editLeadForm, setEditLeadForm]         = useState({ nome: '', whatsapp: '', email: '', observacoes: '' });
   const [showEditIngressoModal, setShowEditIngressoModal] = useState(false);
   const [novoValorIngresso, setNovoValorIngresso]         = useState('');
   const [savingIngresso, setSavingIngresso]               = useState(false);
@@ -727,7 +735,18 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   const [novoValorMaterial, setNovoValorMaterial]         = useState('');
   const [savingMaterial, setSavingMaterial]               = useState(false);
 
-  // ── FIX: pendingUpdates guard contra Realtime sobrescrever optimistic ──────
+  // Column management
+  const [renamingColuna, setRenamingColuna]   = useState<KanbanColuna | null>(null);
+  const [deletingColuna, setDeletingColuna]   = useState<KanbanColuna | null>(null);
+  const [settingsColuna, setSettingsColuna]   = useState<KanbanColuna | null>(null);
+
+  // Shared column hook
+  const {
+    colunas, colunasRef,
+    addColuna, renameColuna, deleteColuna, moveColuna, updateRegraColuna,
+  } = useKanbanColunas('npa', npaEventoId);
+
+  // ── pendingUpdates guard ──────────────────────────────────────────────────
   const pendingUpdates = useRef<Map<string, NPAPhase>>(new Map());
   const leadsRef       = useRef<NPALead[]>([]);
   useEffect(() => { leadsRef.current = leads; }, [leads]);
@@ -955,6 +974,43 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
     setSavingMaterial(false);
   };
 
+  // ── Edit lead ─────────────────────────────────────────────────────────────
+  const handleOpenEditLead = (lead: NPALead) => {
+    setEditingLead(lead);
+    setEditLeadForm({
+      nome: lead.nome,
+      whatsapp: lead.whatsapp,
+      email: lead.email ?? '',
+      observacoes: lead.observacoes ?? '',
+    });
+  };
+
+  const handleSaveEditLead = async () => {
+    if (!editingLead) return;
+    const { error } = await supabase
+      .from('npa_evento_leads')
+      .update({
+        nome: editLeadForm.nome,
+        whatsapp: editLeadForm.whatsapp,
+        email: editLeadForm.email || null,
+        observacoes: editLeadForm.observacoes || null,
+      })
+      .eq('id', editingLead.id);
+    if (error) { toast.error('Erro ao salvar lead'); return; }
+    setLeads(prev => prev.map(l => l.id === editingLead.id ? { ...l, ...editLeadForm } : l));
+    setEditingLead(null);
+    toast.success('Lead atualizado!');
+  };
+
+  // ── Delete column ─────────────────────────────────────────────────────────
+  const handleDeleteColWithLeads = async (id: string) => {
+    // NPA: can only delete custom columns (standard ones have fase_key)
+    const col = colunasRef.current.find(c => c.id === id);
+    if (col?.fase_key) { toast.error('Não é possível apagar colunas padrão do NPA'); return; }
+    await deleteColuna(id);
+    setDeletingColuna(null);
+  };
+
   // ── Salvar metas ──────────────────────────────────────────────────────────
   const handleSaveMetas = async (metas: {
     meta_matriculas: number; meta_faturamento: number;
@@ -1004,6 +1060,15 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
   // ── Render kanban ─────────────────────────────────────────────────────────
   const renderKanban = (turmaFilter?: 'manha' | 'tarde', showTitle?: boolean) => {
     const filteredLeads = getFilteredLeads(turmaFilter);
+
+    // Use dynamic colunas; fall back to PHASES if hook hasn't loaded yet
+    const displayCols = colunas.length > 0
+      ? colunas
+      : PHASES.map((p, i) => ({
+          id: p.id, nome: p.label, ordem: i,
+          fase_key: p.id, cor: null, meta_leads: null, tipo_regra: 'normal',
+        } as KanbanColuna));
+
     return (
       <div className="space-y-3">
         {showTitle && (
@@ -1015,40 +1080,115 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
           </h3>
         )}
         <div className="overflow-x-auto pb-2">
-          <div className="flex gap-3 min-w-max">
-            {PHASES.map((phase) => {
-              const phaseLeads = filteredLeads.filter((l) => l.fase === phase.id);
+          <div className="flex gap-3 min-w-max items-start">
+            {displayCols.map((coluna) => {
+              const faseKey = coluna.fase_key as NPAPhase | undefined;
+              const phaseLeads = filteredLeads.filter((l) =>
+                faseKey ? l.fase === faseKey : false
+              );
+              const bgColor = faseKey
+                ? (PHASES.find(p => p.id === faseKey)?.color ?? 'bg-white')
+                : 'bg-white';
               return (
-                <div key={phase.id} className="flex-shrink-0 w-[260px]">
-                  <div className={`${phase.color} rounded-2xl border border-gray-100 p-3 h-full min-h-[120px]`}>
-                    <div className="mb-3">
-                      <h3 className="font-bold text-sm text-gray-700">{phase.label}</h3>
-                      <span className="inline-block mt-1 text-xs font-semibold text-gray-500 bg-white/70 border border-gray-200 rounded-full px-2 py-0.5">
-                        {phaseLeads.length}
-                      </span>
-                    </div>
+                <div key={coluna.id} className={`group/col flex-shrink-0 w-[260px]`}>
+                  <div className={`${bgColor} rounded-2xl border border-gray-100 p-3 h-full min-h-[120px]`}>
+                    <KanbanColunaHeader
+                      coluna={coluna}
+                      count={phaseLeads.length}
+                      disabled={evento?.status === 'finalizado'}
+                      onRename={() => setRenamingColuna(coluna)}
+                      onDelete={() => setDeletingColuna(coluna)}
+                      onMoveLeft={() => moveColuna(coluna.id, 'left')}
+                      onMoveRight={() => moveColuna(coluna.id, 'right')}
+                      onOpenSettings={() => setSettingsColuna(coluna)}
+                    />
 
-                    {/* Card de faturamento — só na coluna matrícula */}
-                    {phase.id === 'matricula' && (
+                    {/* Faturamento card — só na coluna matrícula */}
+                    {faseKey === 'matricula' && (
                       <MatriculaColumnHeader leads={leads} valorIngressoEvento={valorIngressoEvento} />
                     )}
 
                     <div className="space-y-2 max-h-[520px] overflow-y-auto pr-0.5">
                       {phaseLeads.map((lead) => (
-                        <LeadCard
-                          key={lead.id}
-                          lead={lead}
-                          eventoFinalizado={evento?.status === 'finalizado'}
-                          onMove={handleMoveLead}
-                          onDelete={setLeadToDelete}
-                          onToggleMaterial={handleToggleMaterial}
-                        />
+                        <div key={lead.id} className={`p-3 rounded-xl border ${lead.erro ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'} shadow-sm hover:shadow-md transition-all`}>
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className="font-semibold text-sm text-gray-800 leading-tight">{lead.nome}</span>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button
+                                className="p-1 rounded-md text-gray-400 hover:text-green-500 hover:bg-green-50 transition-colors"
+                                onClick={() => window.open(`https://wa.me/${lead.whatsapp}`, '_blank')}
+                                title="Abrir WhatsApp"
+                              >
+                                <MessageCircle className="h-3.5 w-3.5" />
+                              </button>
+                              {lead.ingresso_pago && (
+                                <span className="p-1 rounded-md text-orange-400" title="Ingresso pago">
+                                  <Flame className="h-3.5 w-3.5" />
+                                </span>
+                              )}
+                              <button
+                                onClick={() => handleOpenEditLead(lead)}
+                                className="p-1 rounded-md text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                                title="Editar lead"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setLeadToDelete(lead)}
+                                className="p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                title="Apagar lead"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-400 mb-2">{lead.whatsapp}</p>
+                          {lead.turma !== 'unica' && (
+                            <div className="mb-2">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${lead.turma === 'manha' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`}>
+                                {lead.turma === 'manha' ? '☀️ Manhã' : '🌆 Tarde'}
+                              </span>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => handleToggleMaterial(lead.id, lead.comprou_material)}
+                            disabled={evento?.status === 'finalizado'}
+                            title="Comprou material no evento"
+                            className={`mb-2 w-full flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium border transition-all ${
+                              lead.comprou_material
+                                ? 'bg-purple-50 border-purple-200 text-purple-700'
+                                : 'bg-gray-50 border-gray-200 text-gray-400 hover:border-purple-200 hover:text-purple-500'
+                            }`}
+                          >
+                            <ShoppingBag className="h-3 w-3 flex-shrink-0" />
+                            {lead.comprou_material ? 'Material comprado 🛍️' : 'Comprou material?'}
+                          </button>
+                          <Select
+                            key={`${lead.id}-${lead.fase}`}
+                            value={lead.fase}
+                            onValueChange={(value) => handleMoveLead(lead.id, value as NPAPhase)}
+                            disabled={evento?.status === 'finalizado'}
+                          >
+                            <SelectTrigger className="h-8 text-xs border-gray-200 rounded-lg bg-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {PHASES.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       ))}
                     </div>
                   </div>
                 </div>
               );
             })}
+            <AddColunaButton
+              onAdd={addColuna}
+              disabled={evento?.status === 'finalizado'}
+            />
           </div>
         </div>
       </div>
@@ -1363,6 +1503,55 @@ export default function NPAKanban({ npaEventoId }: NPAKanbanProps) {
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setLeadToDelete(null)} className="rounded-xl">Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteLead} className="rounded-xl">Apagar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Column Management Modals */}
+      <RenameColunaModal
+        coluna={renamingColuna}
+        onSave={(id, nome) => { renameColuna(id, nome); setRenamingColuna(null); }}
+        onClose={() => setRenamingColuna(null)}
+      />
+      <ColunaSettingsModal
+        coluna={settingsColuna}
+        onSave={(id, updates) => { updateRegraColuna(id, updates); setSettingsColuna(null); }}
+        onClose={() => setSettingsColuna(null)}
+      />
+      <DeleteColunaModal
+        coluna={deletingColuna}
+        leadCount={0}
+        onConfirm={handleDeleteColWithLeads}
+        onClose={() => setDeletingColuna(null)}
+      />
+
+      {/* Edit Lead Modal */}
+      <Dialog open={!!editingLead} onOpenChange={() => setEditingLead(null)}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Editar Lead</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500">Nome</label>
+              <Input value={editLeadForm.nome} onChange={e => setEditLeadForm(f => ({ ...f, nome: e.target.value }))} className="rounded-xl" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500">WhatsApp</label>
+              <Input value={editLeadForm.whatsapp} onChange={e => setEditLeadForm(f => ({ ...f, whatsapp: e.target.value }))} className="rounded-xl" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500">Email</label>
+              <Input value={editLeadForm.email} onChange={e => setEditLeadForm(f => ({ ...f, email: e.target.value }))} className="rounded-xl" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500">Observações</label>
+              <Input value={editLeadForm.observacoes} onChange={e => setEditLeadForm(f => ({ ...f, observacoes: e.target.value }))} className="rounded-xl" />
+            </div>
+            <div className="flex justify-end gap-2 mt-2">
+              <Button variant="outline" onClick={() => setEditingLead(null)} className="rounded-xl">Cancelar</Button>
+              <Button onClick={handleSaveEditLead} className="rounded-xl">Salvar</Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

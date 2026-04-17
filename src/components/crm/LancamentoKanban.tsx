@@ -17,17 +17,16 @@ import {
   Loader2, Power, Trash2, Pencil, TrendingUp, BarChart2
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useKanbanColunas } from './kanban/useKanbanColunas';
+import type { KanbanColuna } from './kanban/useKanbanColunas';
+import {
+  KanbanColunaHeader, AddColunaButton,
+  RenameColunaModal, ColunaSettingsModal, DeleteColunaModal,
+} from './kanban/KanbanColunasUI';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ActiveView = 'kanban' | 'metas' | 'relatorio';
-
-interface KanbanColuna {
-  id: string;
-  lancamento_id: string;
-  nome: string;
-  ordem: number;
-}
 
 interface Launch {
   id: string;
@@ -335,7 +334,6 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const { user, users } = useAuth();
   const navigate = useNavigate();
   const [lancamento, setLancamento] = useState<Launch | null>(null);
-  const [colunas, setColunas] = useState<KanbanColuna[]>([]);
   const [leads, setLeads] = useState<LaunchLead[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -344,25 +342,35 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const [newLeadForm, setNewLeadForm] = useState({ nome: '', whatsapp: '', email: '' });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState<LaunchLead | null>(null);
+  const [editingLead, setEditingLead] = useState<LaunchLead | null>(null);
+  const [editLeadForm, setEditLeadForm] = useState({ nome: '', whatsapp: '', email: '', observacoes: '' });
   const [editingValor, setEditingValor] = useState(false);
   const [valorInput, setValorInput] = useState('');
 
+  // Column management
+  const [renamingColuna, setRenamingColuna] = useState<KanbanColuna | null>(null);
+  const [deletingColuna, setDeletingColuna] = useState<KanbanColuna | null>(null);
+  const [settingsColuna, setSettingsColuna] = useState<KanbanColuna | null>(null);
+
+  // Shared column hook
+  const {
+    colunas, colunasRef, loadingColunas,
+    addColuna, renameColuna, deleteColuna, moveColuna, updateRegraColuna,
+  } = useKanbanColunas('lancamento', lancamentoId);
+
   // Pending guard: blocks Realtime from overwriting optimistic fase updates
-  const pendingUpdates = useRef<Map<string, string>>(new Map()); // leadId → colunaId (UUID)
+  const pendingUpdates = useRef<Map<string, string>>(new Map());
   const leadsRef = useRef<LaunchLead[]>([]);
-  const colunasRef = useRef<KanbanColuna[]>([]);
   useEffect(() => { leadsRef.current = leads; }, [leads]);
-  useEffect(() => { colunasRef.current = colunas; }, [colunas]);
 
   const vinicius = users.find(u => u.nome?.toLowerCase().includes('vinicius'));
 
-  // ── Fetch lancamento + colunas + leads ─────────────────────────────────────
+  // ── Fetch lancamento + leads ────────────────────────────────────────────────
   useEffect(() => {
     if (!lancamentoId) return;
     setLoading(true);
 
     const load = async () => {
-      // 1. Lancamento
       const { data: lancData } = await supabase
         .from('lancamentos')
         .select('*')
@@ -370,17 +378,6 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .single();
       if (lancData) setLancamento(lancData as Launch);
 
-      // 2. Colunas kanban
-      const { data: colData } = await supabase
-        .from('kanban_colunas')
-        .select('*')
-        .eq('lancamento_id', lancamentoId)
-        .order('ordem', { ascending: true });
-      const cols = (colData ?? []) as KanbanColuna[];
-      setColunas(cols);
-      colunasRef.current = cols;
-
-      // 3. Leads
       const { data: leadData } = await supabase
         .from('lancamento_leads')
         .select('*')
@@ -388,9 +385,9 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .order('created_at', { ascending: false });
       let loadedLeads = (leadData ?? []) as LaunchLead[];
 
-      // 4. Migrate any leads whose fase is a legacy string (not a valid column UUID)
-      if (cols.length > 0) {
-        loadedLeads = await migrateLegacyLeads(loadedLeads, cols);
+      // Migrate legacy string fase values once columns are loaded
+      if (colunasRef.current.length > 0) {
+        loadedLeads = await migrateLegacyLeads(loadedLeads, colunasRef.current);
       }
 
       setLeads(loadedLeads);
@@ -587,6 +584,46 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     toast.success('Valor da matrícula atualizado!');
   };
 
+  // ── Edit lead ───────────────────────────────────────────────────────────────
+  const handleOpenEditLead = (lead: LaunchLead) => {
+    setEditingLead(lead);
+    setEditLeadForm({
+      nome: lead.nome,
+      whatsapp: lead.whatsapp,
+      email: lead.email ?? '',
+      observacoes: lead.observacoes ?? '',
+    });
+  };
+
+  const handleSaveEditLead = async () => {
+    if (!editingLead) return;
+    const { error } = await supabase
+      .from('lancamento_leads')
+      .update({
+        nome: editLeadForm.nome,
+        whatsapp: editLeadForm.whatsapp,
+        email: editLeadForm.email || null,
+        observacoes: editLeadForm.observacoes || null,
+      })
+      .eq('id', editingLead.id);
+    if (error) { toast.error('Erro ao salvar lead'); return; }
+    setLeads(prev => prev.map(l => l.id === editingLead.id ? { ...l, ...editLeadForm } : l));
+    setEditingLead(null);
+    toast.success('Lead atualizado!');
+  };
+
+  // ── Delete column (move orphaned leads to first remaining column) ───────────
+  const handleDeleteColWithLeads = async (id: string) => {
+    const remaining = colunasRef.current.filter(c => c.id !== id);
+    if (remaining.length > 0) {
+      const target = remaining[0].id;
+      await supabase.from('lancamento_leads').update({ fase: target }).eq('fase', id);
+      setLeads(prev => prev.map(l => l.fase === id ? { ...l, fase: target } : l));
+    }
+    await deleteColuna(id);
+    setDeletingColuna(null);
+  };
+
   // ── Derived metrics ─────────────────────────────────────────────────────────
   const valorMatricula = Number(lancamento?.valor_matricula) || VALOR_MATRICULA_PADRAO;
   const totalLeads = leads.length;
@@ -777,80 +814,94 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
           {/* Board */}
           <div className="overflow-x-auto">
-            <div className="flex gap-4 min-w-full pb-4">
-              {colunas.map(coluna => (
-                <div key={coluna.id} className="flex-shrink-0 w-80">
-                  <div className="bg-muted rounded-lg p-4 h-full">
-                    <div className="sticky top-0 bg-muted pb-3 mb-3 border-b">
-                      <h3 className="font-semibold">{coluna.nome}</h3>
-                      <Badge variant="secondary" className="text-xs mt-1">
-                        {getLeadsByColuna(coluna.id).length} leads
-                      </Badge>
-                    </div>
-                    <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                      {getLeadsByColuna(coluna.id).map(lead => (
-                        <div
-                          key={lead.id}
-                          className={`p-3 rounded-lg border ${
-                            lead.erro
-                              ? 'bg-red-50 border-red-200'
-                              : lead.matriculado
-                              ? 'bg-green-50 border-green-200'
-                              : 'bg-white border-border'
-                          } hover:shadow-md transition-all`}
-                        >
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <span className="font-medium text-sm flex-1">{lead.nome}</span>
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              {lead.erro && <AlertCircle className="h-4 w-4 text-red-500" />}
-                              <button
-                                onClick={() => setLeadToDelete(lead)}
-                                className="text-muted-foreground hover:text-red-500 transition-colors"
-                                title="Apagar lead"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">{lead.whatsapp}</p>
-                          {lead.email && (
-                            <p className="text-xs text-muted-foreground truncate">{lead.email}</p>
-                          )}
-
-                          {/* Badges */}
-                          <div className="flex gap-1 mt-2 flex-wrap">
-                            {lead.no_grupo && (
-                              <Badge className="text-xs bg-amber-100 text-amber-700">Grupo</Badge>
-                            )}
-                            {lead.grupo_oferta && (
-                              <Badge className="text-xs bg-purple-100 text-purple-700">Oferta</Badge>
-                            )}
-                            {lead.matriculado && (
-                              <Badge className="text-xs bg-green-100 text-green-700">Matr.</Badge>
-                            )}
-                          </div>
-
-                          {/* Move Select — values are column UUIDs */}
-                          <Select
-                            value={lead.fase}
-                            onValueChange={value => handleMoveLead(lead.id, value)}
-                            disabled={lancamento.status === 'finalizado'}
+            <div className="flex gap-4 min-w-full pb-4 items-start">
+              {colunas.map(coluna => {
+                const colLeads = getLeadsByColuna(coluna.id);
+                return (
+                  <div key={coluna.id} className="group/col flex-shrink-0 w-80">
+                    <div className="bg-muted rounded-lg p-4 h-full">
+                      <KanbanColunaHeader
+                        coluna={coluna}
+                        count={colLeads.length}
+                        disabled={lancamento.status === 'finalizado'}
+                        onRename={() => setRenamingColuna(coluna)}
+                        onDelete={() => setDeletingColuna(coluna)}
+                        onMoveLeft={() => moveColuna(coluna.id, 'left')}
+                        onMoveRight={() => moveColuna(coluna.id, 'right')}
+                        onOpenSettings={() => setSettingsColuna(coluna)}
+                      />
+                      <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                        {colLeads.map(lead => (
+                          <div
+                            key={lead.id}
+                            className={`p-3 rounded-lg border ${
+                              lead.erro
+                                ? 'bg-red-50 border-red-200'
+                                : lead.matriculado
+                                ? 'bg-green-50 border-green-200'
+                                : 'bg-white border-border'
+                            } hover:shadow-md transition-all`}
                           >
-                            <SelectTrigger className="mt-2 h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {colunas.map(c => (
-                                <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      ))}
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <span className="font-medium text-sm flex-1">{lead.nome}</span>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {lead.erro && <AlertCircle className="h-4 w-4 text-red-500" />}
+                                <button
+                                  onClick={() => handleOpenEditLead(lead)}
+                                  className="text-muted-foreground hover:text-foreground transition-colors"
+                                  title="Editar lead"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                                <button
+                                  onClick={() => setLeadToDelete(lead)}
+                                  className="text-muted-foreground hover:text-red-500 transition-colors"
+                                  title="Apagar lead"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">{lead.whatsapp}</p>
+                            {lead.email && (
+                              <p className="text-xs text-muted-foreground truncate">{lead.email}</p>
+                            )}
+                            <div className="flex gap-1 mt-2 flex-wrap">
+                              {lead.no_grupo && (
+                                <Badge className="text-xs bg-amber-100 text-amber-700">Grupo</Badge>
+                              )}
+                              {lead.grupo_oferta && (
+                                <Badge className="text-xs bg-purple-100 text-purple-700">Oferta</Badge>
+                              )}
+                              {lead.matriculado && (
+                                <Badge className="text-xs bg-green-100 text-green-700">Matr.</Badge>
+                              )}
+                            </div>
+                            <Select
+                              value={lead.fase}
+                              onValueChange={value => handleMoveLead(lead.id, value)}
+                              disabled={lancamento.status === 'finalizado'}
+                            >
+                              <SelectTrigger className="mt-2 h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {colunas.map(c => (
+                                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
+              <AddColunaButton
+                onAdd={addColuna}
+                disabled={lancamento.status === 'finalizado'}
+              />
             </div>
           </div>
         </>
@@ -913,6 +964,55 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setLeadToDelete(null)}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDeleteLead}>Apagar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Column Management Modals ── */}
+      <RenameColunaModal
+        coluna={renamingColuna}
+        onSave={(id, nome) => { renameColuna(id, nome); setRenamingColuna(null); }}
+        onClose={() => setRenamingColuna(null)}
+      />
+      <ColunaSettingsModal
+        coluna={settingsColuna}
+        onSave={(id, updates) => { updateRegraColuna(id, updates); setSettingsColuna(null); }}
+        onClose={() => setSettingsColuna(null)}
+      />
+      <DeleteColunaModal
+        coluna={deletingColuna}
+        leadCount={deletingColuna ? getLeadsByColuna(deletingColuna.id).length : 0}
+        onConfirm={handleDeleteColWithLeads}
+        onClose={() => setDeletingColuna(null)}
+      />
+
+      {/* ── Edit Lead Modal ── */}
+      <Dialog open={!!editingLead} onOpenChange={() => setEditingLead(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Editar Lead</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Nome</label>
+              <Input value={editLeadForm.nome} onChange={e => setEditLeadForm(f => ({ ...f, nome: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">WhatsApp</label>
+              <Input value={editLeadForm.whatsapp} onChange={e => setEditLeadForm(f => ({ ...f, whatsapp: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Email</label>
+              <Input value={editLeadForm.email} onChange={e => setEditLeadForm(f => ({ ...f, email: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Observações</label>
+              <Input value={editLeadForm.observacoes} onChange={e => setEditLeadForm(f => ({ ...f, observacoes: e.target.value }))} />
+            </div>
+            <div className="flex justify-end gap-2 mt-2">
+              <Button variant="outline" onClick={() => setEditingLead(null)}>Cancelar</Button>
+              <Button onClick={handleSaveEditLead}>Salvar</Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
