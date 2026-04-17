@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Kanban, Settings, UserCog, FileSpreadsheet,
   MessageCircle, Rocket, BarChart3, CheckSquare, ChevronDown, Plus, Brain, ListTodo, Scale,
+  GraduationCap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,7 +24,7 @@ export type View =
   | 'lancamentos_30' | 'lancamentos_31' | 'lancamentos_32'
   | 'team' | 'settings'
   | 'operacoes_tarefas' | 'operacoes_calendario_geral' | 'operacoes_calendario_conteudo'
-  | 'mapa_mental';
+  | 'mapa_mental' | 'pedagogico';
 
 interface SidebarProps {
   currentView: View;
@@ -64,6 +65,7 @@ const MENU: MenuItem[] = [
   },
   { key: 'mapa_mental', label: 'Mapa Mental', icon: Brain },
   { key: 'rodrygo', label: 'Tarefas Rodrygo', icon: CheckSquare },
+  { key: 'pedagogico', label: 'Pedagógico', icon: GraduationCap },
   { key: 'settings', label: 'Configurações', icon: Settings },
 ];
 

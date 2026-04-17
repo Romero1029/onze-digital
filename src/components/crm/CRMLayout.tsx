@@ -18,6 +18,7 @@ import { MapaMental } from './MapaMental';
 import { Financeiro } from './Financeiro';
 import { Balanco } from './Balanco';
 import { Rodrygo } from './Rodrygo';
+import { Pedagogico } from '../pedagogico/Pedagogico';
 import { LancamentoKanban } from './LancamentoKanban';
 import NPAKanban from './NPAKanban';
 import { AulaSecretaKanban } from './AulaSecretaKanban';
@@ -188,6 +189,7 @@ export function CRMLayout() {
       case 'operacoes_calendario_geral': return <Operacoes currentPage={currentView} />;
       case 'operacoes_calendario_conteudo': return <Operacoes currentPage={currentView} />;
       case 'mapa_mental': return <MapaMental />;
+      case 'pedagogico': return <Pedagogico />;
       default: return <Dashboard />;
     }
   };
