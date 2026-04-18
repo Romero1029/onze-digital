@@ -83,7 +83,8 @@ export function Dashboard() {
       if (lancamentosRes.data && lancamentosRes.data.length > 0) {
         const { data: llData } = await supabase.from('lancamento_leads')
           .select('id, lancamento_id, fase, matriculado')
-          .eq('lancamento_id', lancamentosRes.data[0].id).limit(2000);
+          .eq('lancamento_id', lancamentosRes.data[0].id)
+          .limit(10000);
         if (llData) setLancamentosLeads(llData);
       }
 

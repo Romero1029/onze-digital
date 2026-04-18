@@ -382,7 +382,8 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .from('lancamento_leads')
         .select('*')
         .eq('lancamento_id', lancamentoId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(10000);
       let loadedLeads = (leadData ?? []) as LaunchLead[];
 
       // Migrate legacy string fase values once columns are loaded
@@ -438,7 +439,8 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .from('lancamento_leads')
         .select('*')
         .eq('lancamento_id', lancamentoId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(10000);
       if (data) setLeads(data as LaunchLead[]);
     };
 
