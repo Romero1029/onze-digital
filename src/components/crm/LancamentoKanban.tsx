@@ -654,24 +654,6 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
   const getLeadsByColuna = (colunaId: string) => filteredLeads.filter(l => l.fase === colunaId);
 
-  // Count using boolean flags (matches summary cards) — falls back to column count
-  const getColumnCount = (coluna: KanbanColuna) => {
-    const key = coluna.fase_key ?? normColName(coluna.nome);
-    if (key === 'grupo_lancamento' || (key.includes('grupo') && (key.includes('lancamento') || key.includes('lançamento'))))
-      return leads.filter(l => l.no_grupo).length;
-    if (key === 'grupo_oferta' || (key.includes('grupo') && key.includes('oferta')))
-      return leads.filter(l => l.grupo_oferta).length;
-    if (key === 'matricula' || key.includes('matricula') || key.includes('matrícula'))
-      return leads.filter(l => l.matriculado).length;
-    // Negociação = leads past grupo_oferta but not yet matriculated
-    if (key === 'negociacao' || key.includes('negociação') || key.includes('negociacao'))
-      return leads.filter(l => l.grupo_oferta && !l.matriculado).length;
-    // Follow-ups use their own boolean flags
-    if (key.includes('follow') && key.includes('01')) return leads.filter(l => l.follow_up_01).length;
-    if (key.includes('follow') && key.includes('02')) return leads.filter(l => l.follow_up_02).length;
-    if (key.includes('follow') && key.includes('03')) return leads.filter(l => l.follow_up_03).length;
-    return getLeadsByColuna(coluna.id).length;
-  };
 
   if (loading || !lancamento) {
     return (
@@ -852,7 +834,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                     <div className="bg-muted rounded-lg p-4 h-full">
                       <KanbanColunaHeader
                         coluna={coluna}
-                        count={getColumnCount(coluna)}
+                        count={colLeads.length}
                         disabled={lancamento.status === 'finalizado'}
                         onRename={() => setRenamingColuna(coluna)}
                         onDelete={() => setDeletingColuna(coluna)}
