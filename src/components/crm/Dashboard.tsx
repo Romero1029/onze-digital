@@ -81,20 +81,38 @@ export function Dashboard() {
       if (lancamentosRes.data) setLancamentosAtivos(lancamentosRes.data);
 
       if (lancamentosRes.data && lancamentosRes.data.length > 0) {
-        const { data: llData } = await supabase.from('lancamento_leads')
-          .select('id, lancamento_id, fase, matriculado')
-          .eq('lancamento_id', lancamentosRes.data[0].id)
-          .limit(10000);
-        if (llData) setLancamentosLeads(llData);
+        const lancId = lancamentosRes.data[0].id;
+        const allLancLeads: any[] = [];
+        let from = 0;
+        while (true) {
+          const { data: page } = await supabase.from('lancamento_leads')
+            .select('id, lancamento_id, fase, matriculado')
+            .eq('lancamento_id', lancId)
+            .range(from, from + 999);
+          if (!page || page.length === 0) break;
+          allLancLeads.push(...page);
+          if (page.length < 1000) break;
+          from += 1000;
+        }
+        setLancamentosLeads(allLancLeads);
       }
 
       if (npaEventosRes.data && npaEventosRes.data.length > 0) {
         const npaEvento = npaEventosRes.data[0];
         setNpaAtivo(npaEvento);
-        const { data: npaLeadsData } = await supabase.from('npa_evento_leads')
-          .select('id, npa_evento_id, fase, matriculado')
-          .eq('npa_evento_id', npaEvento.id).limit(2000);
-        if (npaLeadsData) setNpaLeads(npaLeadsData);
+        const allNpaLeads: any[] = [];
+        let from = 0;
+        while (true) {
+          const { data: page } = await supabase.from('npa_evento_leads')
+            .select('id, npa_evento_id, fase, matriculado')
+            .eq('npa_evento_id', npaEvento.id)
+            .range(from, from + 999);
+          if (!page || page.length === 0) break;
+          allNpaLeads.push(...page);
+          if (page.length < 1000) break;
+          from += 1000;
+        }
+        setNpaLeads(allNpaLeads);
       }
 
       if (showLoading) setLoading(false);

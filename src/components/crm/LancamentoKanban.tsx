@@ -365,6 +365,26 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
   const vinicius = users.find(u => u.nome?.toLowerCase().includes('vinicius'));
 
+  // ── Fetch all leads with pagination (Supabase max-rows is 1000) ────────────
+  const fetchAllLeads = async (lancId: string) => {
+    const PAGE = 1000;
+    let all: any[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('lancamento_leads')
+        .select('*')
+        .eq('lancamento_id', lancId)
+        .order('created_at', { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    return all;
+  };
+
   // ── Fetch lancamento + leads ────────────────────────────────────────────────
   useEffect(() => {
     if (!lancamentoId) return;
@@ -378,13 +398,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .single();
       if (lancData) setLancamento(lancData as Launch);
 
-      const { data: leadData } = await supabase
-        .from('lancamento_leads')
-        .select('*')
-        .eq('lancamento_id', lancamentoId)
-        .order('created_at', { ascending: false })
-        .limit(10000);
-      let loadedLeads = (leadData ?? []) as LaunchLead[];
+      let loadedLeads = (await fetchAllLeads(lancamentoId)) as LaunchLead[];
 
       // Migrate legacy string fase values once columns are loaded
       if (colunasRef.current.length > 0) {
@@ -435,13 +449,8 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
     const load = async () => {
       // reload leads only (columns are static within a session)
-      const { data } = await supabase
-        .from('lancamento_leads')
-        .select('*')
-        .eq('lancamento_id', lancamentoId)
-        .order('created_at', { ascending: false })
-        .limit(10000);
-      if (data) setLeads(data as LaunchLead[]);
+      const data = await fetchAllLeads(lancamentoId);
+      setLeads(data as LaunchLead[]);
     };
 
     const channel = supabase
