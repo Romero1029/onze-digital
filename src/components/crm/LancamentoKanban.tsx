@@ -638,13 +638,8 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   // ── Derived metrics ─────────────────────────────────────────────────────────
   const valorMatricula = Number(lancamento?.valor_matricula) || VALOR_MATRICULA_PADRAO;
   const totalLeads = leads.length;
-
-  // Count by current column (fase UUID) so cards match Kanban column counts
-  const colGrupoLanc = colunas.find(c => normColName(c.nome).includes('grupo') && (normColName(c.nome).includes('lancamento') || normColName(c.nome).includes('lançamento')));
-  const colGrupoOferta = colunas.find(c => normColName(c.nome).includes('grupo') && normColName(c.nome).includes('oferta'));
-  const grupoLancamento = colGrupoLanc ? leads.filter(l => l.fase === colGrupoLanc.id).length : leads.filter(l => l.no_grupo).length;
-  const grupoOferta = colGrupoOferta ? leads.filter(l => l.fase === colGrupoOferta.id).length : leads.filter(l => l.grupo_oferta).length;
-
+  const grupoLancamento = leads.filter(l => l.no_grupo).length;
+  const grupoOferta = leads.filter(l => l.grupo_oferta).length;
   const matriculas = leads.filter(l => l.matriculado).length;
   const receitaMatriculas = matriculas * valorMatricula;
 
