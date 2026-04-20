@@ -76,7 +76,12 @@ function applyOrder(menu: MenuItem[], order: string[]): MenuItem[] {
 export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   const { user } = useAuth();
   const isAdmin = user?.tipo === 'admin';
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({
+    lancamentos_legado: true,
+    npa_dinamico: true,
+    aula_secreta: true,
+    operacoes: false,
+  });
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('sidebar-collapsed') === 'true'; } catch { return false; }
   });
@@ -252,10 +257,7 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
             else if (item.group === 'npa_dinamico') renderedChildren = npaEventos.map(e => ({ key: `npa_${e.id}` as View, label: e.nome }));
             else if (item.group === 'aula_secreta') renderedChildren = aulaSecretaEventos.map(e => ({ key: `aula_secreta_${e.id}` as View, label: e.nome }));
 
-            const isOpen = !editMode && (expanded[item.group] || isGroupActive(renderedChildren) ||
-              (item.group === 'lancamentos_legado' && lancamentos.length > 0) ||
-              (item.group === 'npa_dinamico' && npaEventos.length > 0) ||
-              (item.group === 'aula_secreta' && aulaSecretaEventos.length > 0));
+            const isOpen = !editMode && !collapsed && expanded[item.group];
 
             return (
               <div
