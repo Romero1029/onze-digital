@@ -105,6 +105,8 @@ export function Financeiro() {
   const [editTurmaForm, setEditTurmaForm] = useState<Partial<Turma>>({});
   const [savingAluno, setSavingAluno] = useState(false);
   const [savingTurma, setSavingTurma] = useState(false);
+  const [showPagoDialog, setShowPagoDialog] = useState(false);
+  const [pagoInfo, setPagoInfo] = useState<{ pagamentoId: string; alunoId: string; data: string } | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -304,13 +306,27 @@ export function Financeiro() {
     loadData();
   };
 
-  const marcarComoPago = async (pagamentoId: string, alunoId: string) => {
-    const { error } = await supabase.from('pagamentos').update({ status: 'pago', data_pagamento: new Date().toISOString() }).eq('id', pagamentoId);
+  const abrirPagoDialog = (pagamentoId: string, alunoId: string) => {
+    const hoje = new Date().toISOString().split('T')[0];
+    setPagoInfo({ pagamentoId, alunoId, data: hoje });
+    setShowPagoDialog(true);
+  };
+
+  const confirmarPago = async () => {
+    if (!pagoInfo) return;
+    const dataISO = new Date(pagoInfo.data + 'T12:00:00').toISOString();
+    const { error } = await supabase.from('pagamentos').update({ status: 'pago', data_pagamento: dataISO }).eq('id', pagoInfo.pagamentoId);
     if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
-    const { data } = await supabase.from('alunos').select('mensalidades_pagas').eq('id', alunoId).single();
-    await supabase.from('alunos').update({ mensalidades_pagas: (data?.mensalidades_pagas || 0) + 1 }).eq('id', alunoId);
-    toast({ title: 'Pago!' });
+    const { data } = await supabase.from('alunos').select('mensalidades_pagas').eq('id', pagoInfo.alunoId).single();
+    await supabase.from('alunos').update({ mensalidades_pagas: (data?.mensalidades_pagas || 0) + 1 }).eq('id', pagoInfo.alunoId);
+    toast({ title: 'Pagamento confirmado!' });
+    setShowPagoDialog(false);
+    setPagoInfo(null);
     loadData();
+  };
+
+  const marcarComoPago = async (pagamentoId: string, alunoId: string) => {
+    abrirPagoDialog(pagamentoId, alunoId);
   };
 
   const estornarPagamento = async (pagamentoId: string, alunoId: string) => {
@@ -725,6 +741,21 @@ export function Financeiro() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAlunoDetail(false)}>Fechar</Button>
             <Button onClick={saveAlunoDetail} disabled={savingAluno} className="bg-primary text-white"><CheckCircle2 className="h-4 w-4 mr-1" />{savingAluno ? 'Salvando...' : 'Salvar Alterações'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Confirmar Pagamento com Data */}
+      <Dialog open={showPagoDialog} onOpenChange={setShowPagoDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Confirmar Pagamento</DialogTitle><DialogDescription>Informe a data em que o pagamento foi realizado</DialogDescription></DialogHeader>
+          <div>
+            <label className="text-sm font-medium">Data do Pagamento</label>
+            <Input type="date" value={pagoInfo?.data || ''} onChange={e => setPagoInfo(prev => prev ? { ...prev, data: e.target.value } : prev)} className="mt-1" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPagoDialog(false)}>Cancelar</Button>
+            <Button onClick={confirmarPago} className="bg-green-600 hover:bg-green-700 text-white">Confirmar Pago</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
