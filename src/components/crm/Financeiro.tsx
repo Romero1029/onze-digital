@@ -725,13 +725,14 @@ export function Financeiro() {
                     <h4 className="font-medium text-sm mb-2 pt-2 border-t border-border">Parcelas</h4>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
-                        <thead><tr className="border-b border-border text-muted-foreground"><th className="text-left py-1.5 px-2">Nº</th><th className="text-left py-1.5 px-2">Mês</th><th className="text-left py-1.5 px-2">Vencimento</th><th className="text-left py-1.5 px-2">Valor</th><th className="text-left py-1.5 px-2">Status</th><th className="text-left py-1.5 px-2">Ação</th></tr></thead>
+                        <thead><tr className="border-b border-border text-muted-foreground"><th className="text-left py-1.5 px-2">Nº</th><th className="text-left py-1.5 px-2">Mês</th><th className="text-left py-1.5 px-2">Vencimento</th><th className="text-left py-1.5 px-2">Pago em</th><th className="text-left py-1.5 px-2">Valor</th><th className="text-left py-1.5 px-2">Status</th><th className="text-left py-1.5 px-2">Ação</th></tr></thead>
                         <tbody>
                           {parcelas.map(p => (
                             <tr key={p.id} className={`border-b border-border/40 ${p.status === 'atrasado' ? 'bg-red-50' : p.status === 'pago' ? 'bg-green-50' : ''}`}>
                               <td className="py-2 px-2">{p.numero_parcela}</td>
                               <td className="py-2 px-2">{p.mes_referencia}</td>
                               <td className="py-2 px-2">{safeDate(p.data_vencimento)}</td>
+                              <td className="py-2 px-2">{p.data_pagamento ? <span className="text-green-700 font-medium">{safeDate(p.data_pagamento)}</span> : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="py-2 px-2 font-medium">{formatCurrency(p.valor)}</td>
                               <td className="py-2 px-2">
                                 <Badge className={p.status === 'pago' ? 'bg-green-100 text-green-800' : p.status === 'atrasado' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}>
