@@ -220,10 +220,8 @@ export function Financeiro() {
         produto: newTurmaForm.produto,
         data_inicio: newTurmaForm.data_inicio,
         data_fim: newTurmaForm.data_fim,
-        dia_vencimento: parseInt(newTurmaForm.dia_vencimento),
         valor_mensalidade: parseFloat(newTurmaForm.valor_mensalidade),
         total_mensalidades: parseInt(newTurmaForm.total_mensalidades),
-        status: 'ativo'
       });
 
       if (error) throw error;
@@ -765,21 +763,6 @@ export function Financeiro() {
             </div>
             {newTurmaForm.produto === 'psicanalise' && (
               <>
-                <div>
-                  <label className="text-sm font-medium">Dia de Vencimento</label>
-                  <Select
-                    value={newTurmaForm.dia_vencimento}
-                    onValueChange={(value) => setNewTurmaForm({ ...newTurmaForm, dia_vencimento: value })}
-                  >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">Dia 10</SelectItem>
-                      <SelectItem value="20">Dia 20</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-sm font-medium">Valor Mensalidade</label>
