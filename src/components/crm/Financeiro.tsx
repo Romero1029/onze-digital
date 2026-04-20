@@ -30,13 +30,13 @@ import { ptBR } from 'date-fns/locale';
 interface Turma {
   id: string;
   nome: string;
-  produto: 'psicanalise' | 'numerologia';
+  produto?: 'psicanalise' | 'numerologia';
+  tipo?: 'psicanalise' | 'numerologia';
   data_inicio: string;
   data_fim: string;
-  dia_vencimento: number;
+  dia_vencimento?: number;
   valor_mensalidade: number;
   total_mensalidades: number;
-  status: string;
   created_at: string;
 }
 
@@ -119,7 +119,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
         supabase.from('turmas')
-          .select('id, nome, produto, data_inicio, data_fim, dia_vencimento, valor_mensalidade, total_mensalidades, status, created_at')
+          .select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, created_at')
           .order('created_at', { ascending: false }).limit(200),
         supabase.from('alunos')
           .select('id, turma_id, produto, nome, whatsapp, email, dia_vencimento, status, mensalidades_pagas, data_inicio, origem_lead, created_at')
@@ -146,7 +146,7 @@ export function Financeiro() {
 
   // Dados filtrados por produto
   const filteredTurmas = useMemo(() => {
-    return turmas.filter(t => t.produto === activeTab);
+    return turmas.filter(t => (t.tipo || t.produto) === activeTab);
   }, [turmas, activeTab]);
 
   const filteredAlunos = useMemo(() => {
