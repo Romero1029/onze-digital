@@ -610,7 +610,12 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .select('*')
         .eq('id', lancamentoId)
         .single();
-      if (lancData) setLancamento(lancData as Launch);
+      if (lancData) {
+        const lsKey = `trafego_config_${lancamentoId}`;
+        const lsConfig = localStorage.getItem(lsKey);
+        const merged = lsConfig ? { ...lancData, ...JSON.parse(lsConfig) } : lancData;
+        setLancamento(merged as Launch);
+      }
 
       let loadedLeads = (await fetchAllLeads(lancamentoId)) as LaunchLead[];
 
@@ -797,8 +802,15 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
   // ── Save tráfego config ──────────────────────────────────────────────────────
   const handleSaveTrafegoConfig = async (data: { meta_campaign_id: string; meta_ad_account_id: string; meta_access_token: string }) => {
+    const lsKey = `trafego_config_${lancamentoId}`;
     const { error } = await supabase.from('lancamentos').update(data as any).eq('id', lancamentoId);
-    if (error) { toast.error('Erro ao salvar configuração'); return; }
+    if (error) {
+      localStorage.setItem(lsKey, JSON.stringify(data));
+      setLancamento(prev => prev ? { ...prev, ...data } : prev);
+      toast.success('Campanha vinculada! (salvo localmente)');
+      return;
+    }
+    localStorage.removeItem(lsKey);
     setLancamento(prev => prev ? { ...prev, ...data } : prev);
     toast.success('Campanha vinculada!');
   };
