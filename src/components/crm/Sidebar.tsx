@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   LayoutDashboard, Kanban, Settings, UserCog, FileSpreadsheet,
-  MessageCircle, Rocket, BarChart3, CheckSquare, ChevronDown, Plus, Brain, ListTodo, Scale,
+  MessageCircle, Rocket, BarChart3, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, Plus, Brain, ListTodo, Scale,
   GraduationCap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -73,6 +73,17 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   const { user } = useAuth();
   const isAdmin = user?.tipo === 'admin';
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('sidebar-collapsed') === 'true'; } catch { return false; }
+  });
+
+  const toggleSidebar = () => {
+    setCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('sidebar-collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
 
   // Lançamentos
   const [lancamentos, setLancamentos] = useState<{ id: string; nome: string }[]>([]);
@@ -228,8 +239,22 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   };
 
   return (
-    <aside className="w-64 bg-white border-r border-border min-h-[calc(100vh-4rem)] p-3 hidden lg:block overflow-y-auto">
-      <nav className="space-y-0.5">
+    <aside className={cn(
+      'bg-white border-r border-border min-h-[calc(100vh-4rem)] hidden lg:flex flex-col overflow-y-auto transition-all duration-300 relative',
+      collapsed ? 'w-16' : 'w-64'
+    )}>
+      {/* Botão de colapso */}
+      <button
+        onClick={toggleSidebar}
+        className="absolute -right-3 top-4 z-10 bg-white border border-border rounded-full p-0.5 shadow-sm hover:bg-primary/5 hover:border-primary transition-colors"
+        title={collapsed ? 'Expandir menu' : 'Minimizar menu'}
+      >
+        {collapsed
+          ? <ChevronRight className="h-3.5 w-3.5 text-foreground/60" />
+          : <ChevronLeft className="h-3.5 w-3.5 text-foreground/60" />}
+      </button>
+
+      <nav className={cn('space-y-0.5 flex-1', collapsed ? 'p-2' : 'p-3')}>
         {MENU.map((item, idx) => {
           if ('adminOnly' in item && item.adminOnly && !isAdmin) return null;
 
@@ -270,20 +295,22 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
               <div key={item.group}>
                 {needsSeparator && <div className="my-3 border-t border-border/40" />}
                 <button
-                  onClick={() => toggle(item.group)}
+                  onClick={() => collapsed ? toggleSidebar() : toggle(item.group)}
+                  title={collapsed ? item.label : undefined}
                   className={cn(
-                    'w-full flex items-center gap-2.5 px-3 py-2.5 rounded transition-all duration-300 text-left text-sm font-600',
+                    'w-full flex items-center rounded transition-all duration-300 text-left text-sm font-600',
+                    collapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5',
                     isGroupActive(renderedChildren)
                       ? 'text-primary bg-primary/8'
                       : 'text-foreground hover:bg-primary/5 hover:text-primary'
                   )}
                 >
                   <item.icon className={cn('h-4.5 w-4.5 transition-colors duration-300 flex-shrink-0', isGroupActive(renderedChildren) ? 'text-primary' : 'text-foreground/60')} />
-                  <span className="flex-1">{item.label}</span>
-                  <ChevronDown className={cn('h-3.5 w-3.5 transition-all duration-300 flex-shrink-0', isOpen ? 'rotate-180 text-primary' : 'text-foreground/40')} />
+                  {!collapsed && <><span className="flex-1">{item.label}</span>
+                  <ChevronDown className={cn('h-3.5 w-3.5 transition-all duration-300 flex-shrink-0', isOpen ? 'rotate-180 text-primary' : 'text-foreground/40')} /></>}
                 </button>
 
-                {isOpen && (
+                {isOpen && !collapsed && (
                   <div className="ml-0 mt-1 space-y-0.5 pl-3 border-l-2 border-primary/15">
                     {renderedChildren.map(child => (
                       <button
@@ -396,15 +423,17 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
               {needsSeparator && <div className="my-3 border-t border-border/40" />}
               <button
                 onClick={() => onViewChange(mi.key)}
+                title={collapsed ? mi.label : undefined}
                 className={cn(
-                  'w-full flex items-center gap-2.5 px-3 py-2.5 rounded transition-all duration-300 text-left text-sm font-600',
+                  'w-full flex items-center rounded transition-all duration-300 text-left text-sm font-600',
+                  collapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5',
                   currentView === mi.key
                     ? 'bg-primary/8 text-primary'
                     : 'text-foreground hover:bg-primary/5 hover:text-primary'
                 )}
               >
                 <mi.icon className={cn('h-4.5 w-4.5 transition-colors duration-300 flex-shrink-0', currentView === mi.key ? 'text-primary' : 'text-foreground/60')} />
-                <span>{mi.label}</span>
+                {!collapsed && <span>{mi.label}</span>}
               </button>
             </div>
           );
@@ -413,6 +442,7 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
     </aside>
   );
 }
+
 
 interface MobileNavProps {
   currentView: View;
