@@ -26,7 +26,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ActiveView = 'kanban' | 'metas' | 'relatorio';
+type ActiveView = 'kanban' | 'metas' | 'relatorio' | 'trafego';
 
 interface Launch {
   id: string;
@@ -38,6 +38,9 @@ interface Launch {
   meta_leads?: number;
   meta_matriculas?: number;
   meta_faturamento?: number;
+  meta_campaign_id?: string;
+  meta_ad_account_id?: string;
+  meta_access_token?: string;
 }
 
 interface LaunchLead {
@@ -330,6 +333,217 @@ function RelatorioTab({ lancamento, leads }: { lancamento: Launch; leads: Launch
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+// ─── TrafegoTab ───────────────────────────────────────────────────────────────
+
+const DATE_PRESETS = [
+  { value: 'today', label: 'Hoje' },
+  { value: 'yesterday', label: 'Ontem' },
+  { value: 'last_7d', label: 'Últimos 7 dias' },
+  { value: 'last_30d', label: 'Últimos 30 dias' },
+  { value: 'this_month', label: 'Este mês' },
+];
+
+interface MetaInsights {
+  spend: string;
+  impressions: string;
+  reach: string;
+  clicks: string;
+  cpm: string;
+  cpc: string;
+  ctr: string;
+  leads: number;
+  cpl: number;
+}
+
+function TrafegoTab({ lancamento, leads: crmLeads, onSaveMeta }: {
+  lancamento: Launch;
+  leads: LaunchLead[];
+  onSaveMeta: (data: { meta_campaign_id: string; meta_ad_account_id: string; meta_access_token: string }) => Promise<void>;
+}) {
+  const [config, setConfig] = useState({
+    meta_campaign_id: lancamento.meta_campaign_id || '',
+    meta_ad_account_id: lancamento.meta_ad_account_id || '',
+    meta_access_token: lancamento.meta_access_token || '',
+  });
+  const [editingConfig, setEditingConfig] = useState(!lancamento.meta_campaign_id);
+  const [datePreset, setDatePreset] = useState('this_month');
+  const [insights, setInsights] = useState<MetaInsights | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savingConfig, setSavingConfig] = useState(false);
+
+  const fetchInsights = async () => {
+    if (!lancamento.meta_campaign_id || !lancamento.meta_access_token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const fields = 'spend,impressions,reach,clicks,cpm,cpc,ctr,actions';
+      const url = `https://graph.facebook.com/v19.0/${lancamento.meta_campaign_id}/insights?fields=${fields}&date_preset=${datePreset}&access_token=${lancamento.meta_access_token}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.error) { setError(json.error.message); return; }
+      const d = json.data?.[0];
+      if (!d) { setInsights(null); return; }
+      const leadAction = d.actions?.find((a: any) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
+      const leads = leadAction ? parseFloat(leadAction.value) : 0;
+      const spend = parseFloat(d.spend || '0');
+      setInsights({
+        spend: d.spend || '0',
+        impressions: d.impressions || '0',
+        reach: d.reach || '0',
+        clicks: d.clicks || '0',
+        cpm: d.cpm || '0',
+        cpc: d.cpc || '0',
+        ctr: d.ctr || '0',
+        leads,
+        cpl: leads > 0 ? spend / leads : 0,
+      });
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (lancamento.meta_campaign_id && lancamento.meta_access_token) fetchInsights();
+  }, [lancamento.meta_campaign_id, lancamento.meta_access_token, datePreset]);
+
+  const handleSaveConfig = async () => {
+    setSavingConfig(true);
+    await onSaveMeta(config);
+    setEditingConfig(false);
+    setSavingConfig(false);
+  };
+
+  const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtInt = (v: string) => parseInt(v).toLocaleString('pt-BR');
+
+  const configured = !!lancamento.meta_campaign_id && !!lancamento.meta_access_token;
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Config */}
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-base flex items-center gap-2">
+          <BarChart2 className="h-4 w-4 text-primary" /> Gestão de Tráfego — Meta Ads
+        </h3>
+        <button onClick={() => setEditingConfig(e => !e)} className="text-xs text-primary hover:underline flex items-center gap-1">
+          <Pencil className="h-3 w-3" /> {editingConfig ? 'Cancelar' : 'Configurar campanha'}
+        </button>
+      </div>
+
+      {editingConfig && (
+        <div className="bg-muted/30 border border-border rounded-lg p-4 space-y-3">
+          <p className="text-xs text-muted-foreground">Vincule a campanha do Meta Ads desta turma:</p>
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="text-xs font-medium text-foreground">ID da Campanha</label>
+              <Input placeholder="ex: 120202XXXXXXXXX" value={config.meta_campaign_id} onChange={e => setConfig(c => ({ ...c, meta_campaign_id: e.target.value }))} className="mt-1 text-sm" />
+              <p className="text-[10px] text-muted-foreground mt-1">Gerenciador de Anúncios → campanha → número na URL</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-foreground">ID da Conta de Anúncios</label>
+              <Input placeholder="ex: act_XXXXXXXXXX" value={config.meta_ad_account_id} onChange={e => setConfig(c => ({ ...c, meta_ad_account_id: e.target.value }))} className="mt-1 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-foreground">Token de Acesso</label>
+              <Input type="password" placeholder="Token do Usuário do Sistema Meta" value={config.meta_access_token} onChange={e => setConfig(c => ({ ...c, meta_access_token: e.target.value }))} className="mt-1 text-sm" />
+              <p className="text-[10px] text-muted-foreground mt-1">Business Manager → Configurações → Usuários do Sistema → Gerar token (permissão: ads_read)</p>
+            </div>
+          </div>
+          <Button onClick={handleSaveConfig} disabled={savingConfig} size="sm" className="bg-primary hover:bg-primary/90 text-white">
+            {savingConfig ? 'Salvando...' : 'Salvar configuração'}
+          </Button>
+        </div>
+      )}
+
+      {!configured && !editingConfig && (
+        <div className="text-center py-12 text-muted-foreground">
+          <BarChart2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">Nenhuma campanha vinculada.</p>
+          <button onClick={() => setEditingConfig(true)} className="text-primary text-sm hover:underline mt-1">Configurar agora</button>
+        </div>
+      )}
+
+      {configured && !editingConfig && (
+        <>
+          {/* Seletor de período */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">Período:</span>
+            <div className="flex gap-1">
+              {DATE_PRESETS.map(p => (
+                <button key={p.value} onClick={() => setDatePreset(p.value)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${datePreset === p.value ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                  {p.label}
+                </button>
+              ))}
+              <button onClick={fetchInsights} className="px-3 py-1 rounded text-xs bg-muted text-muted-foreground hover:bg-muted/70 flex items-center gap-1">
+                <TrendingUp className="h-3 w-3" /> Atualizar
+              </button>
+            </div>
+          </div>
+
+          {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando métricas...</div>}
+          {error && <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-lg">Erro: {error}</div>}
+
+          {insights && !loading && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Gasto */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">Gasto Total</p>
+                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(parseFloat(insights.spend))}</p>
+              </div>
+              {/* Leads */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">Leads Gerados</p>
+                <p className="text-2xl font-bold text-primary mt-1">{insights.leads.toLocaleString('pt-BR')}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{crmLeads.length} no CRM</p>
+              </div>
+              {/* CPL */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">CPL (Custo por Lead)</p>
+                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(insights.cpl)}</p>
+              </div>
+              {/* Alcance */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">Alcance</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{fmtInt(insights.reach)}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{fmtInt(insights.impressions)} impressões</p>
+              </div>
+              {/* CTR */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">CTR</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{parseFloat(insights.ctr).toFixed(2)}%</p>
+              </div>
+              {/* CPC */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">CPC</p>
+                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(parseFloat(insights.cpc))}</p>
+              </div>
+              {/* CPM */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">CPM</p>
+                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(parseFloat(insights.cpm))}</p>
+              </div>
+              {/* Clicks */}
+              <div className="bg-white border border-border rounded-lg p-4">
+                <p className="text-xs text-muted-foreground">Cliques no Link</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{fmtInt(insights.clicks)}</p>
+              </div>
+            </div>
+          )}
+
+          {/* ID da campanha vinculada */}
+          <p className="text-[10px] text-muted-foreground">Campanha vinculada: <span className="font-mono">{lancamento.meta_campaign_id}</span></p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────────
+
 export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const { user, users } = useAuth();
   const navigate = useNavigate();
@@ -581,6 +795,14 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     toast.success('Metas salvas!');
   };
 
+  // ── Save tráfego config ──────────────────────────────────────────────────────
+  const handleSaveTrafegoConfig = async (data: { meta_campaign_id: string; meta_ad_account_id: string; meta_access_token: string }) => {
+    const { error } = await supabase.from('lancamentos').update(data as any).eq('id', lancamentoId);
+    if (error) { toast.error('Erro ao salvar configuração'); return; }
+    setLancamento(prev => prev ? { ...prev, ...data } : prev);
+    toast.success('Campanha vinculada!');
+  };
+
   // ── Save valor matrícula ────────────────────────────────────────────────────
   const handleSaveValor = async () => {
     const v = parseFloat(valorInput.replace(',', '.'));
@@ -747,6 +969,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
           { id: 'kanban', label: 'Kanban' },
           { id: 'metas', label: 'Metas' },
           { id: 'relatorio', label: 'Relatório' },
+          { id: 'trafego', label: '📊 Tráfego' },
         ] as { id: ActiveView; label: string }[]).map(tab => (
           <button
             key={tab.id}
@@ -765,6 +988,11 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       {/* ── Metas Tab ── */}
       {activeView === 'metas' && (
         <MetaTab lancamento={lancamento} leads={leads} onSave={handleSaveMetas} />
+      )}
+
+      {/* ── Tráfego Tab ── */}
+      {activeView === 'trafego' && (
+        <TrafegoTab lancamento={lancamento} leads={leads} onSaveMeta={handleSaveTrafegoConfig} />
       )}
 
       {/* ── Relatorio Tab ── */}
