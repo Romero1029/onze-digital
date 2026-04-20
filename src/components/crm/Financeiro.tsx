@@ -40,6 +40,7 @@ interface Aluno {
   mensalidades_pagas?: number;
   data_inicio?: string;
   origem_lead?: string;
+  valor_mensalidade?: number;
   created_at: string;
 }
 
@@ -115,7 +116,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
         supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, created_at').order('created_at', { ascending: false }).limit(200),
-        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, dia_vencimento, status, mensalidades_pagas, data_inicio, origem_lead, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, dia_vencimento, status, mensalidades_pagas, data_inicio, origem_lead, valor_mensalidade, created_at').order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
       ]);
       if (turmasRes.data) setTurmas(turmasRes.data);
@@ -265,6 +266,7 @@ export function Financeiro() {
       status: a.status,
       origem_lead: a.origem_lead || '',
       mensalidades_pagas: a.mensalidades_pagas || 0,
+      valor_mensalidade: a.valor_mensalidade ?? undefined,
     });
     setShowAlunoDetail(true);
   };
@@ -273,7 +275,7 @@ export function Financeiro() {
     if (!alunoDetail) return;
     setSavingAluno(true);
     try {
-      const { error } = await supabase.from('alunos').update({
+      const updateData: any = {
         nome: editAlunoForm.nome || alunoDetail.nome,
         whatsapp: editAlunoForm.whatsapp || null,
         email: editAlunoForm.email || null,
@@ -283,7 +285,16 @@ export function Financeiro() {
         status: editAlunoForm.status || alunoDetail.status,
         origem_lead: editAlunoForm.origem_lead || null,
         mensalidades_pagas: editAlunoForm.mensalidades_pagas ?? alunoDetail.mensalidades_pagas,
-      }).eq('id', alunoDetail.id);
+        valor_mensalidade: editAlunoForm.valor_mensalidade || null,
+      };
+      const { error } = await supabase.from('alunos').update(updateData).eq('id', alunoDetail.id);
+      // Se valor personalizado definido, atualiza parcelas pendentes deste aluno
+      if (!error && editAlunoForm.valor_mensalidade) {
+        await supabase.from('pagamentos')
+          .update({ valor: editAlunoForm.valor_mensalidade })
+          .eq('aluno_id', alunoDetail.id)
+          .eq('status', 'pendente');
+      }
       if (error) throw error;
       toast({ title: 'Aluno atualizado!' });
       setShowAlunoDetail(false);
@@ -698,6 +709,11 @@ export function Financeiro() {
                   </Select>
                 </div>
                 <div><label className="text-xs font-medium text-muted-foreground uppercase">Mensalidades Pagas</label><Input type="number" value={editAlunoForm.mensalidades_pagas ?? 0} onChange={e => setEditAlunoForm({ ...editAlunoForm, mensalidades_pagas: parseInt(e.target.value) })} className="mt-1" /></div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase">Valor Personalizado (R$)</label>
+                  <Input type="number" step="0.01" value={editAlunoForm.valor_mensalidade ?? ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, valor_mensalidade: e.target.value ? parseFloat(e.target.value) : undefined })} placeholder={`Padrão da turma`} className="mt-1" />
+                  <p className="text-[10px] text-muted-foreground mt-1">Deixe vazio para usar o valor da turma. Ao salvar, parcelas pendentes serão atualizadas.</p>
+                </div>
               </div>
 
               {/* Parcelas */}
