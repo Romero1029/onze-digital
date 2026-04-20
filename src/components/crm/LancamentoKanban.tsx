@@ -371,6 +371,15 @@ function TrafegoTab({ lancamento, leads: crmLeads, onSaveMeta }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [usdToBrl, setUsdToBrl] = useState<number>(1);
+  const [usdCurrency, setUsdCurrency] = useState(false);
+
+  useEffect(() => {
+    fetch('https://economia.awesomeapi.com.br/last/USD-BRL')
+      .then(r => r.json())
+      .then(d => { const rate = parseFloat(d.USDBRL?.bid); if (rate) setUsdToBrl(rate); })
+      .catch(() => {});
+  }, []);
 
   const fetchInsights = async () => {
     if (!lancamento.meta_campaign_id || !lancamento.meta_access_token) return;
@@ -387,6 +396,7 @@ function TrafegoTab({ lancamento, leads: crmLeads, onSaveMeta }: {
       const leadAction = d.actions?.find((a: any) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
       const leads = leadAction ? parseFloat(leadAction.value) : 0;
       const spend = parseFloat(d.spend || '0');
+      setUsdCurrency(json.data?.[0]?.account_currency === 'USD' || true);
       setInsights({
         spend: d.spend || '0',
         impressions: d.impressions || '0',
@@ -416,7 +426,8 @@ function TrafegoTab({ lancamento, leads: crmLeads, onSaveMeta }: {
     setSavingConfig(false);
   };
 
-  const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const conv = (v: number) => usdCurrency ? v * usdToBrl : v;
+  const fmt = (v: number) => conv(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtInt = (v: string) => parseInt(v).toLocaleString('pt-BR');
 
   const configured = !!lancamento.meta_campaign_id && !!lancamento.meta_access_token;
@@ -484,6 +495,9 @@ function TrafegoTab({ lancamento, leads: crmLeads, onSaveMeta }: {
             </div>
           </div>
 
+          {usdCurrency && usdToBrl > 1 && (
+            <p className="text-[10px] text-muted-foreground">Valores convertidos de USD → BRL (cotação: R$ {usdToBrl.toFixed(2)})</p>
+          )}
           {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando métricas...</div>}
           {error && <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-lg">Erro: {error}</div>}
 
