@@ -218,10 +218,11 @@ export function Financeiro() {
       const { error } = await supabase.from('turmas').insert({
         nome: newTurmaForm.nome,
         produto: newTurmaForm.produto,
-        data_inicio: newTurmaForm.data_inicio,
-        data_fim: newTurmaForm.data_fim,
-        valor_mensalidade: parseFloat(newTurmaForm.valor_mensalidade),
-        total_mensalidades: parseInt(newTurmaForm.total_mensalidades),
+        tipo: newTurmaForm.produto,
+        data_inicio: newTurmaForm.data_inicio || null,
+        data_fim: newTurmaForm.data_fim || null,
+        valor_mensalidade: parseFloat(newTurmaForm.valor_mensalidade) || null,
+        total_mensalidades: parseInt(newTurmaForm.total_mensalidades) || null,
       });
 
       if (error) throw error;
