@@ -110,10 +110,42 @@ const LEGACY_FASE_NAMES: Record<string, string> = {
   matricula:         'matricula',
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function resolveLegacyFase(fase: string, colunas: KanbanColuna[]): string {
   const target = normColName(LEGACY_FASE_NAMES[fase] ?? fase.replace(/_/g, ' '));
   const col = colunas.find(c => normColName(c.nome) === target || normColName(c.nome).includes(target));
   return col?.id ?? colunas[0].id;
+}
+
+// When fase is an unknown UUID, use boolean flags to find the correct column
+function resolveFaseByFlags(lead: LaunchLead, colunas: KanbanColuna[]): string {
+  const n = (nome: string) => normColName(nome);
+  if (lead.matriculado) {
+    const col = colunas.find(c => n(c.nome).includes('matricul'));
+    if (col) return col.id;
+  }
+  if (lead.follow_up_03) {
+    const col = colunas.find(c => n(c.nome).includes('follow') && n(c.nome).includes('03'));
+    if (col) return col.id;
+  }
+  if (lead.follow_up_02) {
+    const col = colunas.find(c => n(c.nome).includes('follow') && n(c.nome).includes('02'));
+    if (col) return col.id;
+  }
+  if (lead.follow_up_01) {
+    const col = colunas.find(c => n(c.nome).includes('follow') && n(c.nome).includes('01'));
+    if (col) return col.id;
+  }
+  if (lead.grupo_oferta) {
+    const col = colunas.find(c => n(c.nome).includes('grupo') && n(c.nome).includes('oferta'));
+    if (col) return col.id;
+  }
+  if (lead.no_grupo) {
+    const col = colunas.find(c => n(c.nome).includes('grupo') && (n(c.nome).includes('lancamento') || n(c.nome).includes('lançamento')));
+    if (col) return col.id;
+  }
+  return colunas[0].id;
 }
 
 // ─── MetaBar ──────────────────────────────────────────────────────────────────
@@ -422,7 +454,10 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
     const migrated = loadedLeads.map(lead => {
       if (validIds.has(lead.fase)) return lead;
-      const newFase = resolveLegacyFase(lead.fase, cols);
+      // Unknown UUID → use boolean flags; legacy string → use name mapping
+      const newFase = UUID_RE.test(lead.fase)
+        ? resolveFaseByFlags(lead, cols)
+        : resolveLegacyFase(lead.fase, cols);
       return { ...lead, fase: newFase };
     });
 
