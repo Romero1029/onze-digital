@@ -613,6 +613,14 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     return all;
   };
 
+  const normalizeLeadsToCurrentColunas = useCallback(
+    async (loadedLeads: LaunchLead[]) => {
+      if (colunasRef.current.length === 0) return loadedLeads;
+      return migrateLegacyLeads(loadedLeads, colunasRef.current);
+    },
+    [],
+  );
+
   // ── Fetch lancamento + leads ────────────────────────────────────────────────
   useEffect(() => {
     if (!lancamentoId) return;
@@ -632,17 +640,13 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       }
 
       let loadedLeads = (await fetchAllLeads(lancamentoId)) as LaunchLead[];
-
-      // Migrate legacy string fase values once columns are loaded
-      if (colunasRef.current.length > 0) {
-        loadedLeads = await migrateLegacyLeads(loadedLeads, colunasRef.current);
-      }
+      loadedLeads = await normalizeLeadsToCurrentColunas(loadedLeads);
 
       setLeads(loadedLeads);
       setLoading(false);
     };
     load();
-  }, [lancamentoId]);
+  }, [lancamentoId, normalizeLeadsToCurrentColunas]);
 
   // ── Auto-migration: fix leads with legacy string fase ──────────────────────
   const migrateLegacyLeads = async (
@@ -683,7 +687,8 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     const load = async () => {
       // reload leads only (columns are static within a session)
       const data = await fetchAllLeads(lancamentoId);
-      setLeads(data as LaunchLead[]);
+      const normalized = await normalizeLeadsToCurrentColunas(data as LaunchLead[]);
+      setLeads(normalized);
     };
 
     const channel = supabase
@@ -712,7 +717,28 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [lancamentoId]);
+  }, [lancamentoId, normalizeLeadsToCurrentColunas]);
+
+  useEffect(() => {
+    if (colunas.length === 0 || leadsRef.current.length === 0) return;
+
+    const validIds = new Set(colunas.map(coluna => coluna.id));
+    const hasLegacyPhase = leadsRef.current.some(lead => !validIds.has(lead.fase));
+    if (!hasLegacyPhase) return;
+
+    let cancelled = false;
+
+    const syncLeads = async () => {
+      const normalized = await migrateLegacyLeads(leadsRef.current, colunas);
+      if (!cancelled) setLeads(normalized);
+    };
+
+    syncLeads();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [colunas]);
 
   // ── Move lead ───────────────────────────────────────────────────────────────
   const handleMoveLead = useCallback(async (leadId: string, colunaId: string) => {
