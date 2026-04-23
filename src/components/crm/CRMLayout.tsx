@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { canAccessView, firstAllowedView, getDefaultPermissions } from '@/lib/access-control';
 import { Lead } from '@/types/crm';
 import { Header } from './Header';
 import { Sidebar, MobileNav, type View } from './Sidebar';
@@ -13,7 +14,6 @@ import { LeadModal } from './LeadModal';
 import { FlashLeadModal } from './FlashLeadModal';
 import { NPAEventos } from './NPAEventos';
 import { Operacoes } from './Operacoes';
-import { ProdutividadeAvancada } from './ProdutividadeAvancada';
 import { MapaMental } from './MapaMental';
 import { Financeiro } from './Financeiro';
 import { Balanco } from './Balanco';
@@ -23,10 +23,30 @@ import { LancamentoKanban } from './LancamentoKanban';
 import NPAKanban from './NPAKanban';
 import { AulaSecretaKanban } from './AulaSecretaKanban';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Lock } from 'lucide-react';
+
+function RestrictedView() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <div className="text-center space-y-3">
+        <div className="mx-auto w-14 h-14 rounded-full bg-muted flex items-center justify-center">
+          <Lock className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Acesso restrito</h2>
+          <p className="text-sm text-muted-foreground">
+            Este colaborador não tem permissão para visualizar esta área.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function CRMLayout() {
   const { user } = useAuth();
+  const permissions = user?.permissions ?? getDefaultPermissions(user?.tipo);
+  const isAdmin = user?.tipo === 'admin';
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false);
   const [isFlashLeadModalOpen, setIsFlashLeadModalOpen] = useState(false);
@@ -42,13 +62,18 @@ export function CRMLayout() {
   const handleAddFlashLead = () => { setIsFlashLeadModalOpen(true); };
   const handleEditLead = (lead: Lead) => { setEditingLead(lead); setIsLeadModalOpen(true); };
 
-  // Fetch lancamento ID when view changes
+  useEffect(() => {
+    if (!canAccessView(currentView, permissions, Boolean(isAdmin))) {
+      setCurrentView(firstAllowedView(permissions, Boolean(isAdmin), permissions.allowedLancamentoIds));
+    }
+  }, [currentView, permissions, isAdmin]);
+
   useEffect(() => {
     const loadLancamentoId = async () => {
       if (typeof currentView === 'string' && currentView.startsWith('lancamentos_')) {
         setLoadingLancamento(true);
         const possibleId = currentView.replace('lancamentos_', '');
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
         if (uuidRegex.test(possibleId)) {
           setLancamentoId(possibleId);
         } else {
@@ -65,13 +90,12 @@ export function CRMLayout() {
     loadLancamentoId();
   }, [currentView]);
 
-  // Fetch NPA evento ID when view changes
   useEffect(() => {
     const loadNpaEventoId = async () => {
       if (typeof currentView === 'string' && currentView.startsWith('npa_')) {
         setLoadingNpaEvento(true);
         const possibleId = currentView.replace('npa_', '');
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
         if (uuidRegex.test(possibleId)) {
           setNpaEventoId(possibleId);
         } else {
@@ -88,13 +112,12 @@ export function CRMLayout() {
     loadNpaEventoId();
   }, [currentView]);
 
-  // Fetch Aula Secreta ID when view changes
   useEffect(() => {
     const loadAulaSecretaId = async () => {
       if (typeof currentView === 'string' && currentView.startsWith('aula_secreta_')) {
         setLoadingAulaSecreta(true);
         const possibleId = currentView.replace('aula_secreta_', '');
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
         if (uuidRegex.test(possibleId)) {
           setAulaSecretaId(possibleId);
         } else {
@@ -112,7 +135,10 @@ export function CRMLayout() {
   }, [currentView]);
 
   const renderView = () => {
-    // Handle dynamic lancamentos
+    if (!canAccessView(currentView, permissions, Boolean(isAdmin))) {
+      return <RestrictedView />;
+    }
+
     if (typeof currentView === 'string' && currentView.startsWith('lancamentos_')) {
       if (loadingLancamento) {
         return (
@@ -133,7 +159,6 @@ export function CRMLayout() {
       return <LancamentoKanban lancamentoId={lancamentoId} />;
     }
 
-    // Handle dynamic NPA eventos
     if (typeof currentView === 'string' && currentView.startsWith('npa_')) {
       if (loadingNpaEvento) {
         return (
@@ -154,7 +179,6 @@ export function CRMLayout() {
       return <NPAKanban npaEventoId={npaEventoId} />;
     }
 
-    // Handle dynamic Aula Secreta eventos
     if (typeof currentView === 'string' && currentView.startsWith('aula_secreta_')) {
       if (loadingAulaSecreta) {
         return (
@@ -178,13 +202,14 @@ export function CRMLayout() {
     switch (currentView) {
       case 'dashboard': return <Dashboard />;
       case 'pipeline': return <Pipeline onEditLead={handleEditLead} />;
+      case 'npa_overview': return <NPAEventos />;
       case 'chat': return <Chat />;
       case 'sheets': return <SheetsLeads />;
       case 'financeiro': return <Financeiro />;
       case 'balanco': return <Balanco />;
       case 'rodrygo': return <Rodrygo />;
-      case 'team': return user?.tipo === 'admin' ? <TeamManagement /> : <Dashboard />;
-      case 'settings': return <Settings />;
+      case 'team': return user?.tipo === 'admin' || permissions.canViewTeam ? <TeamManagement /> : <RestrictedView />;
+      case 'settings': return permissions.canViewSettings || isAdmin ? <Settings /> : <RestrictedView />;
       case 'operacoes_tarefas': return <Operacoes currentPage={currentView} />;
       case 'operacoes_calendario_geral': return <Operacoes currentPage={currentView} />;
       case 'operacoes_calendario_conteudo': return <Operacoes currentPage={currentView} />;

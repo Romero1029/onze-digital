@@ -35,6 +35,41 @@ interface Turma {
   data_inicio?: string; data_fim?: string; status: string;
 }
 
+const LANCAMENTO_33_ID = 'b08aa4e0-33b9-45bf-bbab-45227c7a9a76';
+
+function isTruthyFlag(value: unknown) {
+  return value === true || String(value || '').trim().toUpperCase() === 'SIM';
+}
+
+function isLancamento33(lancamento: any) {
+  const nome = String(lancamento?.nome || '').toLowerCase();
+  return lancamento?.id === LANCAMENTO_33_ID || nome.includes('#33') || nome.includes('33');
+}
+
+function pickDashboardLancamento(lancamentos: any[]) {
+  return lancamentos.find(isLancamento33) || lancamentos[0] || null;
+}
+
+function isPlanilhaLancamentoLead(lead: any) {
+  return !isTruthyFlag(lead.no_grupo)
+    && !isTruthyFlag(lead.grupo_oferta)
+    && !isTruthyFlag(lead.follow_up_01)
+    && !isTruthyFlag(lead.follow_up_02)
+    && !isTruthyFlag(lead.follow_up_03)
+    && !isTruthyFlag(lead.matriculado)
+    && (lead.fase === 'planilha' || !lead.fase || /^[0-9a-f-]{36}$/i.test(String(lead.fase)));
+}
+
+function getLancamentoStage(lead: any) {
+  if (lead.fase === 'matricula' || isTruthyFlag(lead.matriculado)) return 'matricula';
+  if (lead.fase === 'follow_up_03' || isTruthyFlag(lead.follow_up_03)) return 'followUp03';
+  if (lead.fase === 'follow_up_02' || isTruthyFlag(lead.follow_up_02)) return 'followUp02';
+  if (lead.fase === 'follow_up_01' || isTruthyFlag(lead.follow_up_01)) return 'followUp01';
+  if (lead.fase === 'grupo_oferta' || isTruthyFlag(lead.grupo_oferta)) return 'grupoOferta';
+  if (lead.fase === 'grupo_lancamento' || lead.fase === 'no_grupo' || isTruthyFlag(lead.no_grupo)) return 'grupoLancamento';
+  return 'planilha';
+}
+
 export function Dashboard() {
   const { user, users } = useAuth();
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
@@ -69,7 +104,7 @@ export function Dashboard() {
           .select('id, titulo, status, prioridade, responsavel_id, responsaveis, prazo, categoria, pagina, created_at')
           .order('prazo').limit(50),
         supabase.from('turmas').select('id, nome, produto, data_inicio, data_fim, status'),
-        supabase.from('lancamentos').select('id, nome, ativo').eq('ativo', true).limit(5),
+        supabase.from('lancamentos').select('id, nome, ativo, created_at').eq('ativo', true).order('created_at', { ascending: false }).limit(10),
         supabase.from('npa_eventos').select('id, nome, ativo').eq('ativo', true).limit(1),
       ]);
 
@@ -78,15 +113,21 @@ export function Dashboard() {
       if (pagamentosRes.data) setPagamentos(pagamentosRes.data as Pagamento[]);
       if (tasksRes.data) setTasks(tasksRes.data as Task[]);
       if (turmasRes.data) setTurmas(turmasRes.data as Turma[]);
-      if (lancamentosRes.data) setLancamentosAtivos(lancamentosRes.data);
+      const sortedLancamentos = [...(lancamentosRes.data || [])].sort((a, b) => {
+        if (isLancamento33(a)) return -1;
+        if (isLancamento33(b)) return 1;
+        return 0;
+      });
+      setLancamentosAtivos(sortedLancamentos);
 
-      if (lancamentosRes.data && lancamentosRes.data.length > 0) {
-        const lancId = lancamentosRes.data[0].id;
+      const dashboardLancamento = pickDashboardLancamento(sortedLancamentos);
+      if (dashboardLancamento) {
+        const lancId = dashboardLancamento.id;
         const allLancLeads: any[] = [];
         let from = 0;
         while (true) {
           const { data: page } = await supabase.from('lancamento_leads')
-            .select('id, lancamento_id, fase, matriculado')
+            .select('id, lancamento_id, fase, no_grupo, grupo_oferta, follow_up_01, follow_up_02, follow_up_03, matriculado')
             .eq('lancamento_id', lancId)
             .range(from, from + 999);
           if (!page || page.length === 0) break;
@@ -198,15 +239,16 @@ export function Dashboard() {
 
   const getFunilData = (produto: 'direto' | 'lancamento' | 'npa') => {
     if (produto === 'lancamento' && lancamentosAtivos.length > 0) {
-      const ll = lancamentosLeads.filter(l => l.lancamento_id === lancamentosAtivos[0].id);
+      const dashboardLancamento = pickDashboardLancamento(lancamentosAtivos);
+      const ll = dashboardLancamento ? lancamentosLeads.filter(l => l.lancamento_id === dashboardLancamento.id) : [];
       return {
-        planilha: ll.filter(l => l.fase === 'planilha').length,
-        grupoLancamento: ll.filter(l => l.fase === 'grupo_lancamento').length,
-        grupoOferta: ll.filter(l => l.fase === 'grupo_oferta').length,
-        followUp01: ll.filter(l => l.fase === 'follow_up_01').length,
-        followUp02: ll.filter(l => l.fase === 'follow_up_02').length,
-        followUp03: ll.filter(l => l.fase === 'follow_up_03').length,
-        matricula: ll.filter(l => l.fase === 'matricula').length,
+        planilha: ll.filter(l => getLancamentoStage(l) === 'planilha').length,
+        grupoLancamento: ll.filter(l => getLancamentoStage(l) === 'grupoLancamento').length,
+        grupoOferta: ll.filter(l => getLancamentoStage(l) === 'grupoOferta').length,
+        followUp01: ll.filter(l => getLancamentoStage(l) === 'followUp01').length,
+        followUp02: ll.filter(l => getLancamentoStage(l) === 'followUp02').length,
+        followUp03: ll.filter(l => getLancamentoStage(l) === 'followUp03').length,
+        matricula: ll.filter(l => getLancamentoStage(l) === 'matricula').length,
       };
     } else if (produto === 'lancamento') {
       return { planilha: 0, grupoLancamento: 0, grupoOferta: 0, followUp01: 0, followUp02: 0, followUp03: 0, matricula: 0 };
@@ -264,6 +306,7 @@ export function Dashboard() {
   };
 
   const tarefasCriticas = tasks.filter(t => t.status !== 'concluido' && t.prazo && isPast(new Date(t.prazo))).slice(0, 3);
+  const dashboardLancamento = pickDashboardLancamento(lancamentosAtivos);
 
   const getSaudeFinanceira = (produto: 'psicanalise' | 'numerologia') => {
     const produtoAlunos = filteredAlunos.filter(a => a.produto === produto && a.status === 'ativo');
@@ -363,7 +406,7 @@ export function Dashboard() {
             ? [['Novo','novo'],['Ingresso Pago','ingressoPago'],['No Grupo','noGrupo'],['Confirmado','confirmado'],['Evento','evento'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']]
             : [['Novo','novo'],['SDR','sdr'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']];
           const total = produto === 'lancamento'
-            ? (lancamentosAtivos.length > 0 ? lancamentosLeads.filter(l => l.lancamento_id === lancamentosAtivos[0].id).length : 0)
+            ? (dashboardLancamento ? lancamentosLeads.filter(l => l.lancamento_id === dashboardLancamento.id).length : 0)
             : produto === 'npa' ? (npaAtivo ? npaLeads.filter(l => l.npa_evento_id === npaAtivo.id).length : 0)
             : filteredLeads.filter(l => l.produto === 'direto').length;
           return (

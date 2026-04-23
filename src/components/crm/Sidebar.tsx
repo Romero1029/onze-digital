@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { ensureDefaultLancamentoKanbanColumns } from '@/components/crm/kanban/useKanbanColunas';
+import { canAccessLancamento, canAccessView, getDefaultPermissions } from '@/lib/access-control';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -34,23 +36,28 @@ type MenuItem =
 const BASE_MENU: MenuItem[] = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'pipeline', label: 'Leads Diretos', icon: Kanban },
-  { group: 'lancamentos_legado', label: 'Lançamentos', icon: Rocket, children: [] },
+  { group: 'lancamentos_legado', label: 'Lancamentos', icon: Rocket, children: [] },
   { group: 'npa_dinamico', label: 'NPA', icon: BarChart3, children: [] },
   { group: 'aula_secreta', label: 'Aula Secreta', icon: Rocket, children: [] },
   { key: 'chat', label: 'Chat', icon: MessageCircle },
   { key: 'sheets', label: 'Leads Sheets', icon: FileSpreadsheet },
   { key: 'financeiro', label: 'Financeiro', icon: BarChart3 },
-  { key: 'balanco', label: 'Balanço', icon: Scale },
+  { key: 'balanco', label: 'Balanco', icon: Scale },
   { key: 'team', label: 'Equipe', icon: UserCog, adminOnly: true },
-  { group: 'operacoes', label: 'Operações', icon: ListTodo, children: [
-    { key: 'operacoes_tarefas', label: 'Tarefas' },
-    { key: 'operacoes_calendario_geral', label: 'Calendário Geral' },
-    { key: 'operacoes_calendario_conteudo', label: 'Calendário de Conteúdo' },
-  ]},
+  {
+    group: 'operacoes',
+    label: 'Operacoes',
+    icon: ListTodo,
+    children: [
+      { key: 'operacoes_tarefas', label: 'Tarefas' },
+      { key: 'operacoes_calendario_geral', label: 'Calendario Geral' },
+      { key: 'operacoes_calendario_conteudo', label: 'Calendario de Conteudo' },
+    ],
+  },
   { key: 'mapa_mental', label: 'Mapa Mental', icon: Brain },
   { key: 'rodrygo', label: 'Tarefas Rodrygo', icon: CheckSquare },
-  { key: 'pedagogico', label: 'Pedagógico', icon: GraduationCap },
-  { key: 'settings', label: 'Configurações', icon: Settings },
+  { key: 'pedagogico', label: 'Pedagogico', icon: GraduationCap },
+  { key: 'settings', label: 'Configuracoes', icon: Settings },
 ];
 
 function getItemId(item: MenuItem) {
@@ -76,6 +83,7 @@ function applyOrder(menu: MenuItem[], order: string[]): MenuItem[] {
 export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   const { user } = useAuth();
   const isAdmin = user?.tipo === 'admin';
+  const permissions = user?.permissions ?? getDefaultPermissions(user?.tipo);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     lancamentos_legado: true,
     npa_dinamico: true,
@@ -92,28 +100,31 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const [lancamentos, setLancamentos] = useState<{ id: string; nome: string }[]>([]);
-  const [loadingLancamentos, setLoadingLancamentos] = useState(true);
   const [newLancamentoName, setNewLancamentoName] = useState('');
   const [isLancamentoDialogOpen, setIsLancamentoDialogOpen] = useState(false);
 
   const [npaEventos, setNpaEventos] = useState<{ id: string; nome: string }[]>([]);
-  const [loadingNpaEventos, setLoadingNpaEventos] = useState(true);
   const [newNpaName, setNewNpaName] = useState('');
   const [isNpaDialogOpen, setIsNpaDialogOpen] = useState(false);
 
   const [aulaSecretaEventos, setAulaSecretaEventos] = useState<{ id: string; nome: string }[]>([]);
-  const [loadingAulaSecreta, setLoadingAulaSecreta] = useState(true);
   const [newAulaSecretaName, setNewAulaSecretaName] = useState('');
   const [isAulaSecretaDialogOpen, setIsAulaSecretaDialogOpen] = useState(false);
 
   useEffect(() => {
     const load = async () => {
-      setLoadingLancamentos(true);
       try {
         const { data, error } = await supabase.from('lancamentos').select('id, nome').order('created_at', { ascending: false });
-        if (error) { console.error('Erro ao carregar lançamentos:', error); return; }
-        setLancamentos(data || []);
-      } finally { setLoadingLancamentos(false); }
+        if (error) {
+          console.error('Erro ao carregar lancamentos:', error);
+          return;
+        }
+        const launchData = data || [];
+        setLancamentos(launchData);
+        await Promise.allSettled(launchData.map((lancamento) => ensureDefaultLancamentoKanbanColumns(lancamento.id)));
+      } catch (error) {
+        console.error('Erro ao carregar lancamentos:', error);
+      }
     };
     load();
     const ch = supabase.channel('lancamentos-sidebar').on('postgres_changes', { event: '*', schema: 'public', table: 'lancamentos' }, () => load()).subscribe();
@@ -122,12 +133,16 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
 
   useEffect(() => {
     const load = async () => {
-      setLoadingNpaEventos(true);
       try {
         const { data, error } = await supabase.from('npa_eventos').select('id, nome').order('created_at', { ascending: false });
-        if (error) { console.error('Erro ao carregar eventos NPA:', error); return; }
+        if (error) {
+          console.error('Erro ao carregar eventos NPA:', error);
+          return;
+        }
         setNpaEventos(data || []);
-      } finally { setLoadingNpaEventos(false); }
+      } catch (error) {
+        console.error('Erro ao carregar eventos NPA:', error);
+      }
     };
     load();
     const ch = supabase.channel('npa-eventos-sidebar').on('postgres_changes', { event: '*', schema: 'public', table: 'npa_eventos' }, () => load()).subscribe();
@@ -136,12 +151,16 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
 
   useEffect(() => {
     const load = async () => {
-      setLoadingAulaSecreta(true);
       try {
         const { data, error } = await supabase.from('aula_secreta_eventos').select('id, nome').order('created_at', { ascending: false });
-        if (error) { console.error('Erro ao carregar eventos Aula Secreta:', error); return; }
+        if (error) {
+          console.error('Erro ao carregar eventos Aula Secreta:', error);
+          return;
+        }
         setAulaSecretaEventos(data || []);
-      } finally { setLoadingAulaSecreta(false); }
+      } catch (error) {
+        console.error('Erro ao carregar eventos Aula Secreta:', error);
+      }
     };
     load();
     const ch = supabase.channel('aula-secreta-sidebar').on('postgres_changes', { event: '*', schema: 'public', table: 'aula_secreta_eventos' }, () => load()).subscribe();
@@ -159,10 +178,9 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
 
   const toggle = (g: string) => setExpanded(p => ({ ...p, [g]: !p[g] }));
   const isGroupActive = (children: { key: View }[]) => children.some(c => c.key === currentView);
-
   const MENU = applyOrder(BASE_MENU, menuOrder);
+  const accessibleLancamentos = lancamentos.filter((item) => canAccessLancamento(permissions, item.id));
 
-  // Drag & drop reorder
   const handleDragStart = (idx: number) => { dragIdx.current = idx; };
   const handleDragOver = (e: React.DragEvent, idx: number, id: string) => {
     e.preventDefault();
@@ -189,36 +207,75 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   const handleAddLancamento = async () => {
     if (!newLancamentoName.trim()) return;
     try {
-      const { data, error } = await supabase.from('lancamentos').insert({ nome: newLancamentoName, status: 'planejamento', ativo: false, meta_matriculas: 0, created_at: new Date().toISOString() }).select('id').single();
-      if (error) { toast.error(`Erro ao criar lançamento: ${error.message}`); return; }
-      if (data) { toast.success(`Lançamento "${newLancamentoName}" criado!`); setNewLancamentoName(''); setIsLancamentoDialogOpen(false); onViewChange(`lancamentos_${data.id}` as View); }
-    } catch { toast.error('Erro inesperado.'); }
+      const { data, error } = await supabase
+        .from('lancamentos')
+        .insert({ nome: newLancamentoName, status: 'planejamento', ativo: false, meta_matriculas: 0, created_at: new Date().toISOString() })
+        .select('id')
+        .single();
+      if (error) { toast.error(`Erro ao criar lancamento: ${error.message}`); return; }
+      if (data) {
+        try {
+          await ensureDefaultLancamentoKanbanColumns(data.id);
+        } catch {
+          toast.warning('Lancamento criado, mas nao foi possivel criar as colunas padrao agora.');
+        }
+        toast.success(`Lancamento "${newLancamentoName}" criado!`);
+        setNewLancamentoName('');
+        setIsLancamentoDialogOpen(false);
+        onViewChange(`lancamentos_${data.id}` as View);
+      }
+    } catch {
+      toast.error('Erro inesperado.');
+    }
   };
 
   const handleAddNpa = async () => {
     if (!newNpaName.trim()) return;
     try {
-      const { data, error } = await supabase.from('npa_eventos').insert({ nome: newNpaName, status: 'em_andamento', ativo: false, created_at: new Date().toISOString() }).select('id').single();
+      const { data, error } = await supabase
+        .from('npa_eventos')
+        .insert({ nome: newNpaName, status: 'em_andamento', ativo: false, created_at: new Date().toISOString() })
+        .select('id')
+        .single();
       if (error) { toast.error(`Erro ao criar evento NPA: ${error.message}`); return; }
-      if (data) { toast.success(`Evento NPA "${newNpaName}" criado!`); setNewNpaName(''); setIsNpaDialogOpen(false); onViewChange(`npa_${data.id}` as View); }
-    } catch { toast.error('Erro inesperado.'); }
+      if (data) {
+        toast.success(`Evento NPA "${newNpaName}" criado!`);
+        setNewNpaName('');
+        setIsNpaDialogOpen(false);
+        onViewChange(`npa_${data.id}` as View);
+      }
+    } catch {
+      toast.error('Erro inesperado.');
+    }
   };
 
   const handleAddAulaSecreta = async () => {
     if (!newAulaSecretaName.trim()) return;
     try {
-      const { data, error } = await supabase.from('aula_secreta_eventos').insert({ nome: newAulaSecretaName, status: 'em_andamento', ativo: false, created_at: new Date().toISOString() }).select('id').single();
+      const { data, error } = await supabase
+        .from('aula_secreta_eventos')
+        .insert({ nome: newAulaSecretaName, status: 'em_andamento', ativo: false, created_at: new Date().toISOString() })
+        .select('id')
+        .single();
       if (error) { toast.error(`Erro ao criar Aula Secreta: ${error.message}`); return; }
-      if (data) { toast.success(`Aula Secreta "${newAulaSecretaName}" criada!`); setNewAulaSecretaName(''); setIsAulaSecretaDialogOpen(false); onViewChange(`aula_secreta_${data.id}` as View); }
-    } catch { toast.error('Erro inesperado.'); }
+      if (data) {
+        toast.success(`Aula Secreta "${newAulaSecretaName}" criada!`);
+        setNewAulaSecretaName('');
+        setIsAulaSecretaDialogOpen(false);
+        onViewChange(`aula_secreta_${data.id}` as View);
+      }
+    } catch {
+      toast.error('Erro inesperado.');
+    }
   };
 
   return (
-    <aside className={cn(
-      'bg-white border-r border-border min-h-[calc(100vh-4rem)] hidden lg:flex flex-col overflow-y-auto transition-all duration-300 relative flex-shrink-0',
-      collapsed ? 'w-16' : 'w-64'
-    )}>
-      {/* Botão colapso */}
+    <aside
+      className={cn(
+        'bg-white border-r border-border min-h-[calc(100vh-4rem)] hidden lg:flex flex-col overflow-y-auto transition-all duration-300 relative flex-shrink-0',
+        collapsed ? 'w-16' : 'w-64',
+      )}
+    >
       <button
         onClick={toggleSidebar}
         className="absolute -right-3 top-4 z-10 bg-white border border-border rounded-full p-0.5 shadow-sm hover:bg-primary/5 hover:border-primary transition-colors"
@@ -230,14 +287,13 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
       </button>
 
       <nav className={cn('space-y-0.5 flex-1 pt-2', collapsed ? 'px-2' : 'px-3')}>
-        {/* Botão editar ordem */}
         {!collapsed && (
           <div className="flex justify-end mb-1">
             <button
               onClick={() => setEditMode(e => !e)}
               className={cn(
                 'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
-                editMode ? 'bg-primary text-white' : 'text-muted-foreground hover:text-primary hover:bg-primary/5'
+                editMode ? 'bg-primary text-white' : 'text-muted-foreground hover:text-primary hover:bg-primary/5',
               )}
               title={editMode ? 'Salvar ordem' : 'Editar ordem do menu'}
             >
@@ -248,14 +304,22 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
 
         {MENU.map((item, idx) => {
           if ('adminOnly' in item && item.adminOnly && !isAdmin) return null;
+          if ('key' in item && !canAccessView(item.key, permissions, Boolean(isAdmin))) return null;
+
           const itemId = getItemId(item);
           const isDragOver = dragOverId === itemId;
 
           if ('group' in item) {
             let renderedChildren = item.children;
-            if (item.group === 'lancamentos_legado') renderedChildren = lancamentos.map(l => ({ key: `lancamentos_${l.id}` as View, label: l.nome }));
+            if (item.group === 'lancamentos_legado') renderedChildren = accessibleLancamentos.map(l => ({ key: `lancamentos_${l.id}` as View, label: l.nome }));
             else if (item.group === 'npa_dinamico') renderedChildren = npaEventos.map(e => ({ key: `npa_${e.id}` as View, label: e.nome }));
             else if (item.group === 'aula_secreta') renderedChildren = aulaSecretaEventos.map(e => ({ key: `aula_secreta_${e.id}` as View, label: e.nome }));
+
+            if (item.group === 'lancamentos_legado' && !permissions.canViewLancamentos && !isAdmin) return null;
+            if (item.group === 'npa_dinamico' && !permissions.canViewNpa && !isAdmin) return null;
+            if (item.group === 'aula_secreta' && !permissions.canViewAulaSecreta && !isAdmin) return null;
+            if (item.group === 'operacoes' && !permissions.canViewOperacoes && !isAdmin) return null;
+            if (renderedChildren.length === 0 && item.group !== 'operacoes' && !isAdmin) return null;
 
             const isOpen = !editMode && !collapsed && expanded[item.group];
 
@@ -276,7 +340,7 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
                     'w-full flex items-center rounded transition-all duration-300 text-left text-sm font-600',
                     collapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5',
                     editMode ? 'cursor-grab active:cursor-grabbing' : '',
-                    isGroupActive(renderedChildren) ? 'text-primary bg-primary/8' : 'text-foreground hover:bg-primary/5 hover:text-primary'
+                    isGroupActive(renderedChildren) ? 'text-primary bg-primary/8' : 'text-foreground hover:bg-primary/5 hover:text-primary',
                   )}
                 >
                   {editMode && !collapsed && <GripVertical className="h-3.5 w-3.5 text-foreground/30 flex-shrink-0" />}
@@ -291,58 +355,92 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
 
                 {isOpen && !collapsed && (
                   <div className="ml-0 mt-1 space-y-0.5 pl-3 border-l-2 border-primary/15">
-                    {renderedChildren.map(child => (
-                      <button key={child.key} onClick={() => onViewChange(child.key)}
-                        className={cn('w-full flex items-center gap-2 px-3 py-2 rounded text-left text-xs transition-all duration-300',
-                          currentView === child.key ? 'bg-primary/12 text-primary font-600' : 'text-foreground/70 hover:text-primary hover:bg-primary/5')}>
+                    {renderedChildren.map((child) => (
+                      <button
+                        key={child.key}
+                        onClick={() => onViewChange(child.key)}
+                        className={cn(
+                          'w-full flex items-center gap-2 px-3 py-2 rounded text-left text-xs transition-all duration-300',
+                          currentView === child.key ? 'bg-primary/12 text-primary font-600' : 'text-foreground/70 hover:text-primary hover:bg-primary/5',
+                        )}
+                      >
                         <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', currentView === child.key ? 'bg-primary' : 'bg-foreground/30')} />
                         <span className="truncate">{child.label}</span>
                       </button>
                     ))}
 
-                    {item.group === 'lancamentos_legado' && (
+                    {item.group === 'lancamentos_legado' && isAdmin && (
                       <Dialog open={isLancamentoDialogOpen} onOpenChange={setIsLancamentoDialogOpen}>
                         <DialogTrigger asChild>
                           <button className="w-full flex items-center gap-2 px-3 py-2 rounded text-left text-xs text-primary hover:bg-primary/10 mt-1 font-600">
-                            <Plus className="h-4 w-4" />Novo Lançamento
+                            <Plus className="h-4 w-4" /> Novo Lancamento
                           </button>
                         </DialogTrigger>
                         <DialogContent>
-                          <DialogHeader><DialogTitle>Criar novo lançamento</DialogTitle><DialogDescription>Digite o nome do novo lançamento</DialogDescription></DialogHeader>
+                          <DialogHeader>
+                            <DialogTitle>Criar novo lancamento</DialogTitle>
+                            <DialogDescription>Digite o nome do novo lancamento</DialogDescription>
+                          </DialogHeader>
                           <div className="flex gap-2">
-                            <Input placeholder="Nome do lançamento" value={newLancamentoName} onChange={(e) => setNewLancamentoName(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAddLancamento()} className="border border-border focus:border-primary" />
+                            <Input
+                              placeholder="Nome do lancamento"
+                              value={newLancamentoName}
+                              onChange={(e) => setNewLancamentoName(e.target.value)}
+                              onKeyPress={(e) => e.key === 'Enter' && handleAddLancamento()}
+                              className="border border-border focus:border-primary"
+                            />
                             <Button onClick={handleAddLancamento} className="bg-primary hover:bg-primary/90">Criar</Button>
                           </div>
                         </DialogContent>
                       </Dialog>
                     )}
-                    {item.group === 'npa_dinamico' && (
+
+                    {item.group === 'npa_dinamico' && isAdmin && (
                       <Dialog open={isNpaDialogOpen} onOpenChange={setIsNpaDialogOpen}>
                         <DialogTrigger asChild>
                           <button className="w-full flex items-center gap-2 px-3 py-2 rounded text-left text-xs text-primary hover:bg-primary/10 mt-1 font-600">
-                            <Plus className="h-4 w-4" />Novo NPA
+                            <Plus className="h-4 w-4" /> Novo NPA
                           </button>
                         </DialogTrigger>
                         <DialogContent>
-                          <DialogHeader><DialogTitle>Criar novo evento NPA</DialogTitle><DialogDescription>Digite o nome do novo evento NPA</DialogDescription></DialogHeader>
+                          <DialogHeader>
+                            <DialogTitle>Criar novo evento NPA</DialogTitle>
+                            <DialogDescription>Digite o nome do novo evento NPA</DialogDescription>
+                          </DialogHeader>
                           <div className="flex gap-2">
-                            <Input placeholder="Nome do evento NPA" value={newNpaName} onChange={(e) => setNewNpaName(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAddNpa()} className="border border-border focus:border-primary" />
+                            <Input
+                              placeholder="Nome do evento NPA"
+                              value={newNpaName}
+                              onChange={(e) => setNewNpaName(e.target.value)}
+                              onKeyPress={(e) => e.key === 'Enter' && handleAddNpa()}
+                              className="border border-border focus:border-primary"
+                            />
                             <Button onClick={handleAddNpa} className="bg-primary hover:bg-primary/90">Criar</Button>
                           </div>
                         </DialogContent>
                       </Dialog>
                     )}
-                    {item.group === 'aula_secreta' && (
+
+                    {item.group === 'aula_secreta' && isAdmin && (
                       <Dialog open={isAulaSecretaDialogOpen} onOpenChange={setIsAulaSecretaDialogOpen}>
                         <DialogTrigger asChild>
                           <button className="w-full flex items-center gap-2 px-3 py-2 rounded text-left text-xs text-primary hover:bg-primary/10 mt-1 font-600">
-                            <Plus className="h-4 w-4" />Nova Aula Secreta
+                            <Plus className="h-4 w-4" /> Nova Aula Secreta
                           </button>
                         </DialogTrigger>
                         <DialogContent>
-                          <DialogHeader><DialogTitle>Criar nova Aula Secreta</DialogTitle><DialogDescription>Digite o nome da nova Aula Secreta</DialogDescription></DialogHeader>
+                          <DialogHeader>
+                            <DialogTitle>Criar nova Aula Secreta</DialogTitle>
+                            <DialogDescription>Digite o nome da nova Aula Secreta</DialogDescription>
+                          </DialogHeader>
                           <div className="flex gap-2">
-                            <Input placeholder="Nome da Aula Secreta" value={newAulaSecretaName} onChange={(e) => setNewAulaSecretaName(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAddAulaSecreta()} className="border border-border focus:border-primary" />
+                            <Input
+                              placeholder="Nome da Aula Secreta"
+                              value={newAulaSecretaName}
+                              onChange={(e) => setNewAulaSecretaName(e.target.value)}
+                              onKeyPress={(e) => e.key === 'Enter' && handleAddAulaSecreta()}
+                              className="border border-border focus:border-primary"
+                            />
                             <Button onClick={handleAddAulaSecreta} className="bg-primary hover:bg-primary/90">Criar</Button>
                           </div>
                         </DialogContent>
@@ -372,7 +470,7 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
                   'w-full flex items-center rounded transition-all duration-300 text-left text-sm font-600',
                   collapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5',
                   editMode ? 'cursor-grab active:cursor-grabbing' : '',
-                  currentView === mi.key ? 'bg-primary/8 text-primary' : 'text-foreground hover:bg-primary/5 hover:text-primary'
+                  currentView === mi.key ? 'bg-primary/8 text-primary' : 'text-foreground hover:bg-primary/5 hover:text-primary',
                 )}
               >
                 {editMode && !collapsed && <GripVertical className="h-3.5 w-3.5 text-foreground/30 flex-shrink-0" />}
@@ -393,21 +491,29 @@ interface MobileNavProps {
 }
 
 export function MobileNav({ currentView, onViewChange }: MobileNavProps) {
+  const { user } = useAuth();
+  const isAdmin = user?.tipo === 'admin';
+  const permissions = user?.permissions ?? getDefaultPermissions(user?.tipo);
   const mobileItems: { key: View; label: string; icon: React.ElementType }[] = [
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { key: 'pipeline', label: 'Leads', icon: Kanban },
     { key: 'chat', label: 'Chat', icon: MessageCircle },
-    { key: 'lancamentos_30', label: 'Lanç.', icon: Rocket },
+    { key: 'lancamentos_30', label: 'Lan.', icon: Rocket },
     { key: 'operacoes_tarefas', label: 'Tarefas', icon: CheckSquare },
     { key: 'settings', label: 'Config', icon: Settings },
   ];
 
+  const visibleItems = mobileItems.filter((item) => canAccessView(item.key, permissions, Boolean(isAdmin)));
+
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50">
       <div className="flex justify-around py-2">
-        {mobileItems.map((item) => (
-          <button key={item.key} onClick={() => onViewChange(item.key)}
-            className={cn('flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors', currentView === item.key ? 'text-primary' : 'text-muted-foreground')}>
+        {visibleItems.map((item) => (
+          <button
+            key={item.key}
+            onClick={() => onViewChange(item.key)}
+            className={cn('flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors', currentView === item.key ? 'text-primary' : 'text-muted-foreground')}
+          >
             <item.icon className="h-5 w-5" />
             <span className="text-[10px] font-medium">{item.label}</span>
           </button>

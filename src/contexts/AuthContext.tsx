@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { AccessPermissions, getDefaultPermissions, normalizePermissionsRow, permissionsToRow } from '@/lib/access-control';
 
 // Types for our app
 export type UserRole = 'admin' | 'vendedor' | 'professora';
@@ -25,6 +26,7 @@ export interface AppUser {
   avatar?: string;
   ativo: boolean;
   criadoEm: string;
+  permissions: AccessPermissions;
 }
 
 interface AuthContextType {
@@ -35,6 +37,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   addUser: (userData: { nome: string; email: string; senha: string; tipo: UserRole; cor: string }) => Promise<{ success: boolean; error?: string; user?: AppUser }>;
   updateUser: (id: string, data: Partial<{ nome: string; cor: string; ativo: boolean; tipo: UserRole }>) => Promise<{ success: boolean; error?: string }>;
+  updateUserPermissions: (id: string, permissions: AccessPermissions) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (id: string) => Promise<{ success: boolean; error?: string }>;
   getActiveVendedores: () => AppUser[];
   getUserById: (id: string) => AppUser | undefined;
@@ -48,6 +51,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const fetchPermissionsRows = async () => {
+    const { data, error } = await (supabase as any)
+      .from('user_access_permissions')
+      .select('*');
+
+    if (error) {
+      if (error.code !== '42P01') {
+        console.error('Error fetching permissions:', error);
+      }
+      return [];
+    }
+
+    return data || [];
+  };
 
   // Fetch all users (profiles + roles)
   const fetchUsers = async () => {
@@ -70,8 +88,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      const permissionsRows = await fetchPermissionsRows();
+
       const appUsers: AppUser[] = (profiles || []).map((profile: Profile) => {
         const userRole = roles?.find((r: { user_id: string; role: UserRole }) => r.user_id === profile.id);
+        const permissionsRow = permissionsRows.find((p: { user_id: string }) => p.user_id === profile.id);
         return {
           id: profile.id,
           nome: profile.nome,
@@ -81,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           avatar: profile.avatar ?? undefined,
           ativo: profile.ativo,
           criadoEm: profile.created_at,
+          permissions: normalizePermissionsRow(permissionsRow, userRole?.role),
         };
       });
 
@@ -124,6 +146,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('Error fetching role:', roleError);
       }
 
+      const { data: permissionsRow, error: permissionsError } = await (supabase as any)
+        .from('user_access_permissions')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .maybeSingle();
+
+      if (permissionsError && permissionsError.code !== '42P01') {
+        console.error('Error fetching permissions:', permissionsError);
+      }
+
       const appUser: AppUser = {
         id: profile.id,
         nome: profile.nome,
@@ -133,6 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         avatar: profile.avatar ?? undefined,
         ativo: profile.ativo,
         criadoEm: profile.created_at,
+        permissions: normalizePermissionsRow(permissionsRow, roleData?.role),
       };
 
       return appUser;
@@ -276,6 +309,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Erro ao definir papel do usuário.' };
       }
 
+      const defaultPermissions = getDefaultPermissions(userRole);
+      const { error: permissionsError } = await (supabase as any)
+        .from('user_access_permissions')
+        .upsert({
+          user_id: authData.user.id,
+          ...permissionsToRow(defaultPermissions),
+        }, { onConflict: 'user_id' });
+
+      if (permissionsError && permissionsError.code !== '42P01') {
+        console.error('Permissions creation error:', permissionsError);
+        return { success: false, error: 'Erro ao definir permissões do usuário.' };
+      }
+
       await fetchUsers();
 
       const newUser: AppUser = {
@@ -286,6 +332,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         cor: userData.cor,
         ativo: true,
         criadoEm: new Date().toISOString(),
+        permissions: defaultPermissions,
       };
 
       return { success: true, user: newUser };
@@ -342,6 +389,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const updateUserPermissions = async (id: string, permissions: AccessPermissions): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const { error } = await (supabase as any)
+        .from('user_access_permissions')
+        .upsert({
+          user_id: id,
+          ...permissionsToRow(permissions),
+        }, { onConflict: 'user_id' });
+
+      if (error) {
+        console.error('Permissions update error:', error);
+        return { success: false, error: error.message };
+      }
+
+      await fetchUsers();
+
+      if (user?.id === id) {
+        setUser((prev) => prev ? { ...prev, permissions } : prev);
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('UpdateUserPermissions exception:', error);
+      return { success: false, error: 'Erro ao atualizar permissões do usuário.' };
+    }
+  };
+
   const deleteUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
     try {
       // Delete will cascade to profile and roles due to foreign key setup
@@ -387,6 +461,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         addUser,
         updateUser,
+        updateUserPermissions,
         deleteUser,
         getActiveVendedores,
         getUserById,
