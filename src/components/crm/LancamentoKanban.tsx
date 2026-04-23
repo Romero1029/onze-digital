@@ -119,6 +119,16 @@ function resolveLegacyFase(fase: string, colunas: KanbanColuna[]): string {
   return col?.id ?? colunas[0].id;
 }
 
+function findColunaIdByName(colunas: KanbanColuna[], matcher: (normalizedName: string) => boolean): string | null {
+  const coluna = colunas.find(c => matcher(normColName(c.nome)));
+  return coluna?.id ?? null;
+}
+
+function countLeadsByFase(leads: LaunchLead[], colunaId: string | null, fallback?: (lead: LaunchLead) => boolean) {
+  if (colunaId) return leads.filter(lead => lead.fase === colunaId).length;
+  return fallback ? leads.filter(fallback).length : 0;
+}
+
 // ─── MetaBar ──────────────────────────────────────────────────────────────────
 
 function MetaBar({ label, atual, meta, color }: { label: string; atual: number; meta: number; color: string }) {
@@ -257,11 +267,11 @@ function RelatorioTab({ lancamento, leads }: { lancamento: Launch; leads: Launch
   const valorMatricula = Number(lancamento.valor_matricula) || VALOR_MATRICULA_PADRAO;
 
   const totalLeads = leads.length;
-  const grupoLancamento = leads.filter(l => l.no_grupo).length;
-  const grupoOferta = leads.filter(l => l.grupo_oferta).length;
-  const follow1 = leads.filter(l => l.follow_up_01).length;
-  const follow2 = leads.filter(l => l.follow_up_02).length;
-  const follow3 = leads.filter(l => l.follow_up_03).length;
+  const grupoLancamento = leads.filter(l => l.no_grupo && !l.grupo_oferta && !l.follow_up_01 && !l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const grupoOferta = leads.filter(l => l.grupo_oferta && !l.follow_up_01 && !l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const follow1 = leads.filter(l => l.follow_up_01 && !l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const follow2 = leads.filter(l => l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const follow3 = leads.filter(l => l.follow_up_03 && !l.matriculado).length;
   const matriculas = leads.filter(l => l.matriculado).length;
   const receitaReal = matriculas * valorMatricula;
 
@@ -912,9 +922,12 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   // ── Derived metrics ─────────────────────────────────────────────────────────
   const valorMatricula = Number(lancamento?.valor_matricula) || VALOR_MATRICULA_PADRAO;
   const totalLeads = leads.length;
-  const grupoLancamento = leads.filter(l => l.no_grupo).length;
-  const grupoOferta = leads.filter(l => l.grupo_oferta).length;
-  const matriculas = leads.filter(l => l.matriculado).length;
+  const grupoLancamentoColunaId = findColunaIdByName(colunas, nome => nome === 'grupo_lancamento');
+  const grupoOfertaColunaId = findColunaIdByName(colunas, nome => nome === 'grupo_oferta');
+  const matriculaColunaId = findColunaIdByName(colunas, nome => nome.includes('matricul'));
+  const grupoLancamento = countLeadsByFase(leads, grupoLancamentoColunaId, lead => lead.no_grupo && !lead.grupo_oferta && !lead.follow_up_01 && !lead.follow_up_02 && !lead.follow_up_03 && !lead.matriculado);
+  const grupoOferta = countLeadsByFase(leads, grupoOfertaColunaId, lead => lead.grupo_oferta && !lead.follow_up_01 && !lead.follow_up_02 && !lead.follow_up_03 && !lead.matriculado);
+  const matriculas = countLeadsByFase(leads, matriculaColunaId, lead => lead.matriculado);
   const receitaMatriculas = matriculas * valorMatricula;
 
   // ── Filter ──────────────────────────────────────────────────────────────────

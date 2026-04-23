@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { ensureDefaultLancamentoKanbanColumns } from '@/components/crm/kanban/useKanbanColunas';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -185,7 +186,12 @@ export function Lancamentos() {
       created_at: new Date().toISOString(),
     }).select().single();
 
-    if (data) {
+    if (!error && data) {
+      try {
+        await ensureDefaultLancamentoKanbanColumns(data.id);
+      } catch {
+        // Mantemos a criação do lançamento mesmo se a semente falhar.
+      }
       setLaunches([data as Launch, ...launches]);
       setCurrentLaunchId(data.id);
       setNewLaunchForm({ nome: '', data_live: '', meta_matriculas: 0, descricao: '' });

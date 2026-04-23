@@ -152,7 +152,7 @@ export function useGoogleDriveUpload() {
     }
   }, [getAccessToken]);
 
-  return { uploadToDrive, uploading, progress, statusMessage };
+  return { uploadToDrive, getAccessToken, uploading, progress, statusMessage };
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
