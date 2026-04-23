@@ -1,5 +1,3 @@
-import type { View } from '@/components/crm/Sidebar';
-
 export interface AccessPermissions {
   canViewDashboard: boolean;
   canViewPipeline: boolean;
@@ -21,6 +19,13 @@ export interface AccessPermissions {
   canViewTeam: boolean;
   canViewSettings: boolean;
 }
+
+export type AppView =
+  | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'balanco' | 'rodrygo'
+  | 'lancamentos_30' | 'lancamentos_31' | 'lancamentos_32'
+  | 'team' | 'settings'
+  | 'operacoes_tarefas' | 'operacoes_calendario_geral' | 'operacoes_calendario_conteudo'
+  | 'mapa_mental' | 'pedagogico';
 
 export const DEFAULT_NON_ADMIN_PERMISSIONS: AccessPermissions = {
   canViewDashboard: true,
@@ -131,7 +136,7 @@ export function canAccessView(view: string, permissions: AccessPermissions, isAd
   if (view.startsWith('npa_')) return permissions.canViewNpa;
   if (view.startsWith('aula_secreta_')) return permissions.canViewAulaSecreta;
 
-  const permissionByView: Partial<Record<View, boolean>> = {
+  const permissionByView: Partial<Record<AppView, boolean>> = {
     dashboard: permissions.canViewDashboard,
     pipeline: permissions.canViewPipeline,
     npa_overview: permissions.canViewNpa,
@@ -149,13 +154,13 @@ export function canAccessView(view: string, permissions: AccessPermissions, isAd
     pedagogico: permissions.canViewPedagogico,
   };
 
-  return permissionByView[view as View] ?? true;
+  return permissionByView[view as AppView] ?? true;
 }
 
 export function firstAllowedView(permissions: AccessPermissions, isAdmin: boolean, allowedLaunchIds: string[]) {
-  if (isAdmin || permissions.canViewDashboard) return 'dashboard' as View;
+  if (isAdmin || permissions.canViewDashboard) return 'dashboard' as AppView;
   if (permissions.canViewPipeline) return 'pipeline';
-  if (permissions.canViewLancamentos && allowedLaunchIds.length > 0) return `lancamentos_${allowedLaunchIds[0]}` as View;
+  if (permissions.canViewLancamentos && allowedLaunchIds.length > 0) return `lancamentos_${allowedLaunchIds[0]}` as AppView;
   if (permissions.canViewNpa) return 'npa_overview';
   if (permissions.canViewChat) return 'chat';
   if (permissions.canViewSheets) return 'sheets';

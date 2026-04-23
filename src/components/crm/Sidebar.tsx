@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { ensureDefaultLancamentoKanbanColumns } from '@/components/crm/kanban/useKanbanColunas';
-import { canAccessLancamento, canAccessView, getDefaultPermissions } from '@/lib/access-control';
+import { AppView, canAccessLancamento, canAccessView, getDefaultPermissions } from '@/lib/access-control';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -17,12 +17,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 
-export type View =
-  | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'balanco' | 'rodrygo'
-  | 'lancamentos_30' | 'lancamentos_31' | 'lancamentos_32'
-  | 'team' | 'settings'
-  | 'operacoes_tarefas' | 'operacoes_calendario_geral' | 'operacoes_calendario_conteudo'
-  | 'mapa_mental' | 'pedagogico';
+export type View = AppView;
 
 interface SidebarProps {
   currentView: View;
