@@ -257,8 +257,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const isFirstUser = users.length === 0;
       const userRole = isFirstUser ? 'admin' : userData.tipo;
       const email = userData.email.trim().toLowerCase();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+
+      if (!accessToken) {
+        return { success: false, error: 'Sessao expirada. Entre novamente e tente de novo.' };
+      }
 
       const { data: createdData, error: createError } = await supabase.functions.invoke('admin-create-user', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: {
           nome: userData.nome,
           email,
