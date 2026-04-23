@@ -123,7 +123,11 @@ export function Rodrygo() {
   };
 
   const removeVideo = async (id: string) => {
-    await supabase.from('tarefas').update({ video_url: null } as any).eq('id', id);
+    const { error } = await supabase.from('tarefas').update({ video_url: null } as any).eq('id', id);
+    if (error) {
+      toast({ variant: 'destructive', title: 'Erro ao remover', description: error.message });
+      return;
+    }
     fetchTasks();
     toast({ title: 'Arquivo removido' });
   };
@@ -179,7 +183,8 @@ export function Rodrygo() {
     setUploadingTaskId(taskId);
     try {
       const url = await uploadToDrive(file);
-      await supabase.from('tarefas').update({ video_url: url } as any).eq('id', taskId);
+      const { error } = await supabase.from('tarefas').update({ video_url: url } as any).eq('id', taskId);
+      if (error) throw error;
       fetchTasks();
       toast({ title: 'Arquivo enviado para o Drive!', description: file.name });
     } catch (err: any) {
@@ -280,7 +285,7 @@ export function Rodrygo() {
                     columnTasks.map(task => {
                       const isOverdue = task.prazo && isPast(new Date(task.prazo)) && task.status !== 'concluido';
                       const isUploadingThis = uploadingTaskId === task.id;
-                      const videoUrl = (task as any).video_url as string | undefined;
+                      const videoUrl = task.video_url;
                       const downloadUrl = getDriveDownloadUrl(videoUrl);
 
                       return (
