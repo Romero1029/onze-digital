@@ -256,64 +256,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Check if this is the first user (should be admin)
       const isFirstUser = users.length === 0;
       const userRole = isFirstUser ? 'admin' : userData.tipo;
+      const email = userData.email.trim().toLowerCase();
 
-      // Create user with Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: userData.email.trim().toLowerCase(),
-        password: userData.senha,
-        options: {
-          data: {
-            nome: userData.nome,
-            cor: userData.cor,
-          }
-        }
+      const { data: createdData, error: createError } = await supabase.functions.invoke('admin-create-user', {
+        body: {
+          nome: userData.nome,
+          email,
+          password: userData.senha,
+          tipo: userRole === 'admin' ? 'admin' : 'vendedor',
+          cor: userData.cor,
+        },
       });
 
-      if (authError) {
-        console.error('Signup error:', authError);
-        return { success: false, error: authError.message };
-      }
+      const createdUserId = createdData?.user?.id;
 
-      if (!authData.user) {
-        return { success: false, error: 'Erro ao criar usuário.' };
-      }
-
-      // Create profile
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          id: authData.user.id,
-          nome: userData.nome,
-          email: userData.email.trim().toLowerCase(),
-          cor: userData.cor,
-          ativo: true,
-        });
-
-      if (profileError) {
-        console.error('Profile creation error:', profileError);
-        return { success: false, error: 'Erro ao criar perfil do usuário.' };
-      }
-
-      // Create user role
-      const { error: roleError } = await supabase
-        .from('user_roles')
-        .insert({
-          user_id: authData.user.id,
-          role: userRole,
-        });
-
-      if (roleError) {
-        console.error('Role creation error:', roleError);
-        // Clean up profile if role creation failed
-        await supabase.from('profiles').delete().eq('id', authData.user.id);
-        return { success: false, error: 'Erro ao definir papel do usuário.' };
+      if (createError || !createdData?.success || !createdUserId) {
+        console.error('Admin create user error:', createError || createdData);
+        return {
+          success: false,
+          error: createdData?.error || createError?.message || 'Erro ao criar usuario.',
+        };
       }
 
       const defaultPermissions = getDefaultPermissions(userRole);
       const { error: permissionsError } = await (supabase as any)
         .from('user_access_permissions')
         .upsert({
-          user_id: authData.user.id,
+          user_id: createdUserId,
           ...permissionsToRow(defaultPermissions),
         }, { onConflict: 'user_id' });
 
@@ -325,9 +294,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await fetchUsers();
 
       const newUser: AppUser = {
-        id: authData.user.id,
+        id: createdUserId,
         nome: userData.nome,
-        email: userData.email.trim().toLowerCase(),
+        email,
         tipo: userRole,
         cor: userData.cor,
         ativo: true,
