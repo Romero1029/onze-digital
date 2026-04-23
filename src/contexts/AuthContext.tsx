@@ -268,13 +268,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       });
 
+      let functionErrorMessage = createError?.message;
+      if (createError && 'context' in createError) {
+        const response = createError.context as Response | undefined;
+        try {
+          const errorPayload = await response?.clone().json();
+          functionErrorMessage = errorPayload?.error || functionErrorMessage;
+        } catch {
+          try {
+            functionErrorMessage = (await response?.clone().text()) || functionErrorMessage;
+          } catch {
+            // Keep Supabase's default message if the response body cannot be read.
+          }
+        }
+      }
+
       const createdUserId = createdData?.user?.id;
 
       if (createError || !createdData?.success || !createdUserId) {
         console.error('Admin create user error:', createError || createdData);
         return {
           success: false,
-          error: createdData?.error || createError?.message || 'Erro ao criar usuario.',
+          error: createdData?.error || functionErrorMessage || 'Erro ao criar usuario.',
         };
       }
 
