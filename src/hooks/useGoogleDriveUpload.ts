@@ -14,18 +14,33 @@ declare global {
 export function useGoogleDriveUpload() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [statusMessage, setStatusMessage] = useState('');
   const accessTokenRef = useRef<string | null>(null);
 
   const getAccessToken = useCallback((): Promise<string> => {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const timeoutId = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('O Google nao retornou autorizacao. Confira se o popup foi bloqueado e tente novamente.'));
+      }, 45000);
+
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        callback();
+      };
+
       if (!window.google?.accounts?.oauth2) {
-        reject(new Error('Google Identity Services nao carregado. Recarregue a pagina.'));
+        finish(() => reject(new Error('Google Identity Services nao carregado. Recarregue a pagina.')));
         return;
       }
 
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
       if (!clientId) {
-        reject(new Error('VITE_GOOGLE_CLIENT_ID nao configurado no ambiente.'));
+        finish(() => reject(new Error('VITE_GOOGLE_CLIENT_ID nao configurado no ambiente.')));
         return;
       }
 
@@ -34,12 +49,14 @@ export function useGoogleDriveUpload() {
         scope: DRIVE_SCOPE,
         callback: (response: any) => {
           if (response.error) {
-            reject(new Error(response.error_description || response.error));
+            finish(() => reject(new Error(response.error_description || response.error)));
             return;
           }
 
-          accessTokenRef.current = response.access_token;
-          resolve(response.access_token);
+          finish(() => {
+            accessTokenRef.current = response.access_token;
+            resolve(response.access_token);
+          });
         },
       });
 
@@ -50,12 +67,15 @@ export function useGoogleDriveUpload() {
   const uploadToDrive = useCallback(async (file: File): Promise<string> => {
     setUploading(true);
     setProgress(0);
+    setStatusMessage('Abrindo autorizacao do Google...');
 
     try {
+      setProgress(1);
       const token = accessTokenRef.current || await getAccessToken();
+      setStatusMessage('Conectando com o Google Drive...');
       setProgress(5);
 
-      const initRes = await fetch(DRIVE_UPLOAD_URL, {
+      const initRes = await fetchWithTimeout(DRIVE_UPLOAD_URL, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -67,7 +87,7 @@ export function useGoogleDriveUpload() {
           name: file.name,
           parents: [FOLDER_ID],
         }),
-      });
+      }, 45000);
 
       if (!initRes.ok) {
         const err = await initRes.json().catch(() => ({}));
@@ -77,6 +97,7 @@ export function useGoogleDriveUpload() {
       const uploadUrl = initRes.headers.get('Location');
       if (!uploadUrl) throw new Error('URL de upload nao retornada pelo Drive.');
 
+      setStatusMessage('Enviando arquivo para o Drive...');
       setProgress(10);
 
       let offset = 0;
@@ -108,20 +129,22 @@ export function useGoogleDriveUpload() {
 
       if (!fileId) throw new Error('ID do arquivo nao retornado pelo Drive.');
 
-      const permissionRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+      setStatusMessage('Liberando link de acesso...');
+      const permissionRes = await fetchWithTimeout(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ role: 'reader', type: 'anyone' }),
-      });
+      }, 45000);
 
       if (!permissionRes.ok) {
         const err = await permissionRes.json().catch(() => ({}));
         throw new Error(err?.error?.message || 'Arquivo enviado, mas nao foi possivel liberar o acesso.');
       }
 
+      setStatusMessage('Upload concluido.');
       setProgress(100);
       return viewUrl || downloadUrl || `https://drive.google.com/file/d/${fileId}/view`;
     } finally {
@@ -129,7 +152,23 @@ export function useGoogleDriveUpload() {
     }
   }, [getAccessToken]);
 
-  return { uploadToDrive, uploading, progress };
+  return { uploadToDrive, uploading, progress, statusMessage };
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error('O Google Drive demorou demais para responder. Tente novamente.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function uploadChunk(

@@ -55,7 +55,7 @@ export function Rodrygo() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingTaskIdRef = useRef<string | null>(null);
 
-  const { uploadToDrive, uploading, progress } = useGoogleDriveUpload();
+  const { uploadToDrive, uploading, progress, statusMessage } = useGoogleDriveUpload();
 
   const [form, setForm] = useState({
     titulo: '',
@@ -354,8 +354,11 @@ export function Rodrygo() {
                             )}
 
                             {isUploadingThis && (
-                              <div className="w-full bg-blue-100 rounded-full h-1.5">
-                                <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+                              <div className="space-y-1">
+                                <div className="w-full bg-blue-100 rounded-full h-1.5">
+                                  <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+                                </div>
+                                <p className="text-[11px] text-blue-700">{statusMessage || 'Preparando upload...'}</p>
                               </div>
                             )}
 
