@@ -17,6 +17,17 @@ export interface KanbanColuna {
 
 type EventoTipo = 'lancamento' | 'npa' | 'aula_secreta';
 
+const DEFAULT_LANCAMENTO_COLUNAS = [
+  'Planilha',
+  'Grupo Lançamento',
+  'Grupo Oferta',
+  'Negociação',
+  'Follow Up 01',
+  'Follow Up 02',
+  'Follow Up 03',
+  'Matrícula',
+] as const;
+
 function buildFilter(tipo: EventoTipo, eventoId: string) {
   if (tipo === 'lancamento')  return { lancamento_id: `eq.${eventoId}` };
   if (tipo === 'npa')         return { npa_evento_id: `eq.${eventoId}` };
@@ -30,6 +41,33 @@ function buildInsertBody(tipo: EventoTipo, eventoId: string, nome: string, ordem
   return                            { ...base, aula_secreta_id: eventoId };
 }
 
+export async function ensureDefaultLancamentoKanbanColumns(lancamentoId: string): Promise<KanbanColuna[]> {
+  const { data: existing, error: fetchError } = await supabase
+    .from('kanban_colunas')
+    .select('*')
+    .eq('lancamento_id', lancamentoId)
+    .order('ordem', { ascending: true });
+
+  if (fetchError) throw fetchError;
+  if (existing && existing.length > 0) return existing as KanbanColuna[];
+
+  const payload = DEFAULT_LANCAMENTO_COLUNAS.map((nome, ordem) => ({
+    nome,
+    ordem,
+    tipo_regra: 'normal',
+    lancamento_id: lancamentoId,
+  }));
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('kanban_colunas')
+    .insert(payload)
+    .select('*')
+    .order('ordem', { ascending: true });
+
+  if (insertError) throw insertError;
+  return (inserted || []) as KanbanColuna[];
+}
+
 export function useKanbanColunas(tipo: EventoTipo, eventoId: string) {
   const [colunas, setColunas] = useState<KanbanColuna[]>([]);
   const [loadingColunas, setLoadingColunas] = useState(true);
@@ -38,6 +76,18 @@ export function useKanbanColunas(tipo: EventoTipo, eventoId: string) {
 
   const load = useCallback(async () => {
     setLoadingColunas(true);
+    if (tipo === 'lancamento') {
+      try {
+        const data = await ensureDefaultLancamentoKanbanColumns(eventoId);
+        setColunas(data);
+        colunasRef.current = data;
+      } catch {
+        toast.error('Erro ao carregar colunas do kanban');
+      }
+      setLoadingColunas(false);
+      return;
+    }
+
     const filterKey = tipo === 'lancamento' ? 'lancamento_id' : tipo === 'npa' ? 'npa_evento_id' : 'aula_secreta_id';
     const { data, error } = await supabase
       .from('kanban_colunas')
