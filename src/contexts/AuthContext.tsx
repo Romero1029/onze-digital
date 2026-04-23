@@ -264,41 +264,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Sessao expirada. Entre novamente e tente de novo.' };
       }
 
-      const { data: createdData, error: createError } = await supabase.functions.invoke('admin-create-user', {
+      const createResponse = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`, {
+        method: 'POST',
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          'Content-Type': 'application/json',
         },
-        body: {
+        body: JSON.stringify({
           nome: userData.nome,
           email,
           password: userData.senha,
           tipo: userRole === 'admin' ? 'admin' : 'vendedor',
           cor: userData.cor,
-        },
+        }),
       });
 
-      let functionErrorMessage = createError?.message;
-      if (createError && 'context' in createError) {
-        const response = createError.context as Response | undefined;
-        try {
-          const errorPayload = await response?.clone().json();
-          functionErrorMessage = errorPayload?.error || functionErrorMessage;
-        } catch {
-          try {
-            functionErrorMessage = (await response?.clone().text()) || functionErrorMessage;
-          } catch {
-            // Keep Supabase's default message if the response body cannot be read.
-          }
-        }
+      let createdData: any = null;
+      let functionErrorMessage = '';
+
+      try {
+        createdData = await createResponse.clone().json();
+        functionErrorMessage = createdData?.error || '';
+      } catch {
+        functionErrorMessage = await createResponse.clone().text();
       }
 
       const createdUserId = createdData?.user?.id;
 
-      if (createError || !createdData?.success || !createdUserId) {
-        console.error('Admin create user error:', createError || createdData);
+      if (!createResponse.ok || !createdData?.success || !createdUserId) {
+        console.error('Admin create user error:', createResponse.status, createdData || functionErrorMessage);
         return {
           success: false,
-          error: createdData?.error || functionErrorMessage || 'Erro ao criar usuario.',
+          error: functionErrorMessage || `Erro ao criar usuario. Status ${createResponse.status}.`,
         };
       }
 
