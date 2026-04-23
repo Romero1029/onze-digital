@@ -1,7 +1,9 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 const FOLDER_ID = '1RudAGfciHhJtHdpfCFR7imO52q7c6WhN';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,webViewLink,webContentLink';
+const CHUNK_SIZE = 5 * 1024 * 1024;
 
 declare global {
   interface Window {
@@ -17,13 +19,13 @@ export function useGoogleDriveUpload() {
   const getAccessToken = useCallback((): Promise<string> => {
     return new Promise((resolve, reject) => {
       if (!window.google?.accounts?.oauth2) {
-        reject(new Error('Google Identity Services não carregado. Recarregue a página.'));
+        reject(new Error('Google Identity Services nao carregado. Recarregue a pagina.'));
         return;
       }
 
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
       if (!clientId) {
-        reject(new Error('VITE_GOOGLE_CLIENT_ID não configurado no .env'));
+        reject(new Error('VITE_GOOGLE_CLIENT_ID nao configurado no ambiente.'));
         return;
       }
 
@@ -33,10 +35,11 @@ export function useGoogleDriveUpload() {
         callback: (response: any) => {
           if (response.error) {
             reject(new Error(response.error_description || response.error));
-          } else {
-            accessTokenRef.current = response.access_token;
-            resolve(response.access_token);
+            return;
           }
+
+          accessTokenRef.current = response.access_token;
+          resolve(response.access_token);
         },
       });
 
@@ -50,63 +53,62 @@ export function useGoogleDriveUpload() {
 
     try {
       const token = accessTokenRef.current || await getAccessToken();
+      setProgress(5);
 
-      const initRes = await fetch(
-        'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'X-Upload-Content-Type': file.type,
-            'X-Upload-Content-Length': String(file.size),
-          },
-          body: JSON.stringify({
-            name: file.name,
-            parents: [FOLDER_ID],
-          }),
-        }
-      );
+      const initRes = await fetch(DRIVE_UPLOAD_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Type': file.type || 'application/octet-stream',
+          'X-Upload-Content-Length': String(file.size),
+        },
+        body: JSON.stringify({
+          name: file.name,
+          parents: [FOLDER_ID],
+        }),
+      });
 
       if (!initRes.ok) {
         const err = await initRes.json().catch(() => ({}));
-        throw new Error(err?.error?.message || 'Erro ao iniciar upload no Drive');
+        throw new Error(err?.error?.message || 'Erro ao iniciar upload no Drive.');
       }
 
       const uploadUrl = initRes.headers.get('Location');
-      if (!uploadUrl) throw new Error('URL de upload não retornada pelo Drive');
+      if (!uploadUrl) throw new Error('URL de upload nao retornada pelo Drive.');
 
-      const CHUNK_SIZE = 5 * 1024 * 1024;
+      setProgress(10);
+
       let offset = 0;
       let fileId = '';
+      let viewUrl = '';
+      let downloadUrl = '';
 
       while (offset < file.size) {
         const end = Math.min(offset + CHUNK_SIZE - 1, file.size - 1);
         const chunk = file.slice(offset, end + 1);
 
-        const res = await fetch(uploadUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Range': `bytes ${offset}-${end}/${file.size}`,
-            'Content-Type': file.type,
-          },
-          body: chunk,
+        const res = await uploadChunk(uploadUrl, chunk, file.type, offset, end, file.size, (loaded) => {
+          const uploadedBytes = offset + loaded;
+          setProgress(Math.min(99, Math.round(10 + (uploadedBytes / file.size) * 85)));
         });
 
         if (res.status === 200 || res.status === 201) {
           const data = await res.json();
           fileId = data.id;
+          viewUrl = data.webViewLink || '';
+          downloadUrl = data.webContentLink || '';
         } else if (res.status !== 308) {
-          throw new Error(`Erro durante upload (status ${res.status})`);
+          const errorText = await res.text().catch(() => '');
+          throw new Error(errorText || `Erro durante upload (status ${res.status}).`);
         }
 
         offset += CHUNK_SIZE;
-        setProgress(Math.min(99, Math.round((offset / file.size) * 100)));
       }
 
-      if (!fileId) throw new Error('ID do arquivo não retornado pelo Drive');
+      if (!fileId) throw new Error('ID do arquivo nao retornado pelo Drive.');
 
-      await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+      const permissionRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -115,12 +117,59 @@ export function useGoogleDriveUpload() {
         body: JSON.stringify({ role: 'reader', type: 'anyone' }),
       });
 
+      if (!permissionRes.ok) {
+        const err = await permissionRes.json().catch(() => ({}));
+        throw new Error(err?.error?.message || 'Arquivo enviado, mas nao foi possivel liberar o acesso.');
+      }
+
       setProgress(100);
-      return `https://drive.google.com/file/d/${fileId}/view`;
+      return viewUrl || downloadUrl || `https://drive.google.com/file/d/${fileId}/view`;
     } finally {
       setUploading(false);
     }
   }, [getAccessToken]);
 
   return { uploadToDrive, uploading, progress };
+}
+
+function uploadChunk(
+  uploadUrl: string,
+  chunk: Blob,
+  contentType: string,
+  start: number,
+  end: number,
+  total: number,
+  onProgress: (loaded: number) => void
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+    xhr.setRequestHeader('Content-Type', contentType || 'application/octet-stream');
+    xhr.timeout = 30 * 60 * 1000;
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded);
+    };
+
+    xhr.onload = () => {
+      const headers = new Headers();
+      xhr.getAllResponseHeaders().trim().split(/[\r\n]+/).forEach((line) => {
+        if (!line) return;
+        const parts = line.split(': ');
+        const header = parts.shift();
+        if (header) headers.append(header, parts.join(': '));
+      });
+
+      resolve(new Response(xhr.responseText || null, {
+        status: xhr.status,
+        statusText: xhr.statusText,
+        headers,
+      }));
+    };
+
+    xhr.onerror = () => reject(new Error('Falha de rede durante o upload para o Drive.'));
+    xhr.ontimeout = () => reject(new Error('O upload demorou demais e foi interrompido. Tente novamente.'));
+    xhr.send(chunk);
+  });
 }

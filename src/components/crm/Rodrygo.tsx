@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/use-toast';
-import { Plus, Trash2, Upload, Video, ExternalLink, X } from 'lucide-react';
+import { Download, ExternalLink, FileDown, Plus, Trash2, Upload, Video, X } from 'lucide-react';
 import type { Task } from '@/types/crm';
 import { format, isPast } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -21,6 +21,19 @@ const TASK_CATEGORIES = [
   { value: 'social', label: '📱 Social Media', color: 'bg-pink-500' },
   { value: 'reuniao', label: '📞 Reunião', color: 'bg-green-500' },
 ];
+
+function getDriveFileId(url?: string) {
+  if (!url) return '';
+  const fileMatch = url.match(/\/file\/d\/([^/]+)/);
+  if (fileMatch?.[1]) return fileMatch[1];
+  const idMatch = url.match(/[?&]id=([^&]+)/);
+  return idMatch?.[1] || '';
+}
+
+function getDriveDownloadUrl(url?: string) {
+  const fileId = getDriveFileId(url);
+  return fileId ? `https://drive.google.com/uc?export=download&id=${fileId}` : url || '#';
+}
 
 const TASK_COLUMNS = [
   { key: 'a_fazer', label: 'A Fazer', color: 'bg-muted' },
@@ -112,7 +125,7 @@ export function Rodrygo() {
   const removeVideo = async (id: string) => {
     await supabase.from('tarefas').update({ video_url: null } as any).eq('id', id);
     fetchTasks();
-    toast({ title: 'Vídeo removido' });
+    toast({ title: 'Arquivo removido' });
   };
 
   const handleDragStart = (e: React.DragEvent, taskId: string) => {
@@ -158,7 +171,7 @@ export function Rodrygo() {
       const url = await uploadToDrive(file);
       await supabase.from('tarefas').update({ video_url: url } as any).eq('id', taskId);
       fetchTasks();
-      toast({ title: 'Vídeo enviado para o Drive!', description: file.name });
+      toast({ title: 'Arquivo enviado para o Drive!', description: file.name });
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Erro no upload', description: err.message });
     } finally {
@@ -189,7 +202,7 @@ export function Rodrygo() {
 
   return (
     <div className="h-full flex flex-col bg-white">
-      <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileSelected} />
+      <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelected} />
 
       {/* Header */}
       <div className="p-4 lg:p-6 border-b border-border flex-shrink-0">
@@ -258,6 +271,7 @@ export function Rodrygo() {
                       const isOverdue = task.prazo && isPast(new Date(task.prazo)) && task.status !== 'concluido';
                       const isUploadingThis = uploadingTaskId === task.id;
                       const videoUrl = (task as any).video_url as string | undefined;
+                      const downloadUrl = getDriveDownloadUrl(videoUrl);
 
                       return (
                         <Card
@@ -297,22 +311,33 @@ export function Rodrygo() {
                               </div>
                             )}
 
-                            {/* Vídeo */}
+                            {/* Arquivo */}
                             {videoUrl ? (
-                              <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-md border border-blue-200">
-                                <Video className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                              <div className="space-y-2 p-2 bg-blue-50 rounded-md border border-blue-200">
+                                <div className="flex items-center gap-2">
+                                  <Video className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                                  <a
+                                    href={videoUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:underline flex-1 truncate flex items-center gap-1"
+                                  >
+                                    Ver arquivo no Drive
+                                    <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                                  </a>
+                                  <button onClick={() => removeVideo(task.id)} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
                                 <a
-                                  href={videoUrl}
+                                  href={downloadUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-xs text-blue-600 hover:underline flex-1 truncate flex items-center gap-1"
+                                  className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
                                 >
-                                  Ver vídeo no Drive
-                                  <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                                  <Download className="h-3 w-3" />
+                                  Baixar no computador
                                 </a>
-                                <button onClick={() => removeVideo(task.id)} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
-                                  <X className="h-3 w-3" />
-                                </button>
                               </div>
                             ) : (
                               <button
@@ -323,8 +348,8 @@ export function Rodrygo() {
                                     ? 'border-blue-400 bg-blue-50 text-blue-600'
                                     : 'border-border text-muted-foreground hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50')}
                               >
-                                <Upload className="h-3 w-3" />
-                                {isUploadingThis ? `Enviando... ${progress}%` : 'Subir vídeo para o Drive'}
+                                {isUploadingThis ? <FileDown className="h-3 w-3 animate-pulse" /> : <Upload className="h-3 w-3" />}
+                                {isUploadingThis ? `Enviando... ${progress}%` : 'Subir arquivo para o Drive'}
                               </button>
                             )}
 
