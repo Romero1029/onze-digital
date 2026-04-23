@@ -55,7 +55,7 @@ export function Rodrygo() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingTaskIdRef = useRef<string | null>(null);
 
-  const { uploadToDrive, getAccessToken, uploading, progress, statusMessage } = useGoogleDriveUpload();
+  const { uploadToDrive, getAccessToken, hasAccessToken, uploading, progress, statusMessage } = useGoogleDriveUpload();
 
   const [form, setForm] = useState({
     titulo: '',
@@ -157,13 +157,18 @@ export function Rodrygo() {
   };
 
   const handleUploadClick = async (taskId: string) => {
-    try {
-      await getAccessToken();
-      pendingTaskIdRef.current = taskId;
-      fileInputRef.current?.click();
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Erro de Autorização', description: err.message });
+    if (!hasAccessToken()) {
+      try {
+        await getAccessToken();
+        toast({ title: 'Autorizado!', description: 'O Google autorizou. Clique no botão novamente para escolher o arquivo.' });
+      } catch (err: any) {
+        toast({ variant: 'destructive', title: 'Erro de Autorização', description: err.message });
+      }
+      return;
     }
+
+    pendingTaskIdRef.current = taskId;
+    fileInputRef.current?.click();
   };
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
