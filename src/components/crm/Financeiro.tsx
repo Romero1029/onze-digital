@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { canAccessFinanceiroTurma } from '@/lib/access-control';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -77,6 +79,7 @@ const statusColors: Record<string, string> = {
 };
 
 export function Financeiro() {
+  const { permissions, isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState<ProdutoTab>('psicanalise');
   const [subView, setSubView] = useState<SubView>('alunos');
   const [turmas, setTurmas] = useState<Turma[]>([]);
@@ -129,12 +132,22 @@ export function Financeiro() {
     }
   };
 
-  const filteredTurmas = useMemo(() => turmas.filter(t => (t.tipo || t.produto) === activeTab), [turmas, activeTab]);
+  const filteredTurmas = useMemo(() => {
+    return turmas.filter(t => {
+      if ((t.tipo || t.produto) !== activeTab) return false;
+      if (isAdmin) return true;
+      return canAccessFinanceiroTurma(permissions, t.id);
+    });
+  }, [turmas, activeTab, permissions, isAdmin]);
   const filteredAlunos = useMemo(() => {
-    let r = alunos.filter(a => a.produto === activeTab);
+    let r = alunos.filter(a => {
+      if (a.produto !== activeTab) return false;
+      if (isAdmin) return true;
+      return canAccessFinanceiroTurma(permissions, a.turma_id);
+    });
     if (selectedTurmaId !== 'todas') r = r.filter(a => a.turma_id === selectedTurmaId);
     return r;
-  }, [alunos, activeTab, selectedTurmaId]);
+  }, [alunos, activeTab, selectedTurmaId, permissions, isAdmin]);
   const filteredPagamentos = useMemo(() => pagamentos.filter(p => p.produto === activeTab), [pagamentos, activeTab]);
 
   const currentMonth = new Date();

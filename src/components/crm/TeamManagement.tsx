@@ -67,6 +67,7 @@ export function TeamManagement() {
   const [loading, setLoading] = useState(false);
   const [availableLancamentos, setAvailableLancamentos] = useState<LancamentoOption[]>([]);
   const [availableTurmas, setAvailableTurmas] = useState<TurmaOption[]>([]);
+  const [availableFinanceiroTurmas, setAvailableFinanceiroTurmas] = useState<TurmaOption[]>([]);
   const [permissions, setPermissions] = useState<AccessPermissions>(getDefaultPermissions('vendedor'));
   const [formData, setFormData] = useState({
     nome: '',
@@ -81,13 +82,16 @@ export function TeamManagement() {
       const [
         { data: lancamentosData },
         { data: turmasData },
+        { data: financeiroTurmasData },
       ] = await Promise.all([
         supabase.from('lancamentos').select('id, nome').order('created_at', { ascending: false }),
         supabase.from('pedagogico_turmas').select('id, nome').order('created_at', { ascending: false }),
+        supabase.from('turmas').select('id, nome').order('created_at', { ascending: false }),
       ]);
 
       setAvailableLancamentos(lancamentosData || []);
       setAvailableTurmas(turmasData || []);
+      setAvailableFinanceiroTurmas(financeiroTurmasData || []);
     };
 
     loadOptions();
@@ -135,6 +139,11 @@ export function TeamManagement() {
         next.allowedLancamentoIds = [];
       }
 
+      if (key === 'canViewFinanceiro' && !checked) {
+        next.canViewAllFinanceiroTurmas = false;
+        next.allowedFinanceiroTurmaIds = [];
+      }
+
       if (key === 'canViewPedagogico' && !checked) {
         next.canViewAllTurmas = false;
         next.allowedTurmaIds = [];
@@ -142,6 +151,10 @@ export function TeamManagement() {
 
       if (key === 'canViewAllLancamentos' && checked) {
         next.allowedLancamentoIds = [];
+      }
+
+      if (key === 'canViewAllFinanceiroTurmas' && checked) {
+        next.allowedFinanceiroTurmaIds = [];
       }
 
       if (key === 'canViewAllTurmas' && checked) {
@@ -167,6 +180,15 @@ export function TeamManagement() {
       allowedTurmaIds: checked
         ? [...new Set([...prev.allowedTurmaIds, id])]
         : prev.allowedTurmaIds.filter((item) => item !== id),
+    }));
+  };
+
+  const toggleFinanceiroTurma = (id: string, checked: boolean) => {
+    setPermissions((prev) => ({
+      ...prev,
+      allowedFinanceiroTurmaIds: checked
+        ? [...new Set([...prev.allowedFinanceiroTurmaIds, id])]
+        : prev.allowedFinanceiroTurmaIds.filter((item) => item !== id),
     }));
   };
 
@@ -343,6 +365,7 @@ export function TeamManagement() {
 
   const selectedLancamentosCount = permissions.canViewAllLancamentos ? availableLancamentos.length : permissions.allowedLancamentoIds.length;
   const selectedTurmasCount = permissions.canViewAllTurmas ? availableTurmas.length : permissions.allowedTurmaIds.length;
+  const selectedFinanceiroTurmasCount = permissions.canViewAllFinanceiroTurmas ? availableFinanceiroTurmas.length : permissions.allowedFinanceiroTurmaIds.length;
 
   return (
     <div className="p-4 lg:p-6 space-y-6 animate-fade-in pb-20 lg:pb-6">
@@ -501,6 +524,49 @@ export function TeamManagement() {
                             ))}
                             {availableLancamentos.length === 0 && (
                               <p className="text-xs text-muted-foreground">Nenhum lançamento encontrado.</p>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      )}
+                    </div>
+                  )}
+
+                  {permissions.canViewFinanceiro && (
+                    <div className="rounded-xl border border-border p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold text-foreground">Financeiro liberado</h3>
+                          <p className="text-xs text-muted-foreground">
+                            Defina quais turmas do Financeiro este colaborador pode visualizar.
+                          </p>
+                        </div>
+                        <Badge variant="outline">{selectedFinanceiroTurmasCount} liberada(s)</Badge>
+                      </div>
+
+                      <label className="flex items-center gap-3 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={permissions.canViewAllFinanceiroTurmas}
+                          onCheckedChange={(checked) => togglePermission('canViewAllFinanceiroTurmas', checked === true)}
+                          disabled={loading}
+                        />
+                        <span>Ver todas as turmas</span>
+                      </label>
+
+                      {!permissions.canViewAllFinanceiroTurmas && (
+                        <ScrollArea className="h-36 rounded-md border border-border p-3">
+                          <div className="space-y-3">
+                            {availableFinanceiroTurmas.map((turma) => (
+                              <label key={turma.id} className="flex items-center gap-3 text-sm cursor-pointer">
+                                <Checkbox
+                                  checked={permissions.allowedFinanceiroTurmaIds.includes(turma.id)}
+                                  onCheckedChange={(checked) => toggleFinanceiroTurma(turma.id, checked === true)}
+                                  disabled={loading}
+                                />
+                                <span>{turma.nome}</span>
+                              </label>
+                            ))}
+                            {availableFinanceiroTurmas.length === 0 && (
+                              <p className="text-xs text-muted-foreground">Nenhuma turma encontrada.</p>
                             )}
                           </div>
                         </ScrollArea>

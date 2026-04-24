@@ -9,6 +9,8 @@ export interface AccessPermissions {
   canViewChat: boolean;
   canViewSheets: boolean;
   canViewFinanceiro: boolean;
+  canViewAllFinanceiroTurmas: boolean;
+  allowedFinanceiroTurmaIds: string[];
   canViewBalanco: boolean;
   canViewOperacoes: boolean;
   canViewMapaMental: boolean;
@@ -38,6 +40,8 @@ export const DEFAULT_NON_ADMIN_PERMISSIONS: AccessPermissions = {
   canViewChat: true,
   canViewSheets: true,
   canViewFinanceiro: true,
+  canViewAllFinanceiroTurmas: true,
+  allowedFinanceiroTurmaIds: [],
   canViewBalanco: true,
   canViewOperacoes: true,
   canViewMapaMental: true,
@@ -75,6 +79,8 @@ export function normalizePermissionsRow(row: any, role?: string): AccessPermissi
     canViewChat: row.can_view_chat ?? defaults.canViewChat,
     canViewSheets: row.can_view_sheets ?? defaults.canViewSheets,
     canViewFinanceiro: row.can_view_financeiro ?? defaults.canViewFinanceiro,
+    canViewAllFinanceiroTurmas: row.can_view_all_financeiro_turmas ?? defaults.canViewAllFinanceiroTurmas,
+    allowedFinanceiroTurmaIds: Array.isArray(row.allowed_financeiro_turma_ids) ? row.allowed_financeiro_turma_ids.filter(Boolean) : defaults.allowedFinanceiroTurmaIds,
     canViewBalanco: row.can_view_balanco ?? defaults.canViewBalanco,
     canViewOperacoes: row.can_view_operacoes ?? defaults.canViewOperacoes,
     canViewMapaMental: row.can_view_mapa_mental ?? defaults.canViewMapaMental,
@@ -99,6 +105,8 @@ export function permissionsToRow(permissions: AccessPermissions) {
     can_view_chat: permissions.canViewChat,
     can_view_sheets: permissions.canViewSheets,
     can_view_financeiro: permissions.canViewFinanceiro,
+    can_view_all_financeiro_turmas: permissions.canViewAllFinanceiroTurmas,
+    allowed_financeiro_turma_ids: permissions.allowedFinanceiroTurmaIds,
     can_view_balanco: permissions.canViewBalanco,
     can_view_operacoes: permissions.canViewOperacoes,
     can_view_mapa_mental: permissions.canViewMapaMental,
@@ -115,6 +123,13 @@ export function canAccessLancamento(permissions: AccessPermissions, lancamentoId
   return permissions.canViewLancamentos && (
     permissions.canViewAllLancamentos ||
     permissions.allowedLancamentoIds.includes(lancamentoId)
+  );
+}
+
+export function canAccessFinanceiroTurma(permissions: AccessPermissions, turmaId: string) {
+  return permissions.canViewFinanceiro && (
+    permissions.canViewAllFinanceiroTurmas ||
+    permissions.allowedFinanceiroTurmaIds.includes(turmaId)
   );
 }
 

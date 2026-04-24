@@ -645,7 +645,13 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       if (lancData) {
         const lsKey = `trafego_config_${lancamentoId}`;
         const lsConfig = localStorage.getItem(lsKey);
-        const merged = lsConfig ? { ...lancData, ...JSON.parse(lsConfig) } : lancData;
+        // Only use localStorage if Supabase doesn't have the config yet (migration not applied)
+        let merged = { ...lancData };
+        if (lsConfig && !lancData.meta_campaign_id) {
+          Object.assign(merged, JSON.parse(lsConfig));
+        } else if (lancData.meta_campaign_id) {
+          localStorage.removeItem(lsKey);
+        }
         setLancamento(merged as Launch);
       }
 
