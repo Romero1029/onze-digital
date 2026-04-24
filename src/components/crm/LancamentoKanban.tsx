@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import {
   Plus, Search, AlertCircle, Users, Target, DollarSign,
-  Loader2, Power, Trash2, Pencil, TrendingUp, BarChart2
+  Loader2, Power, Trash2, Pencil, TrendingUp, BarChart2,
+  ChevronUp, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useKanbanColunas } from './kanban/useKanbanColunas';
@@ -343,7 +344,7 @@ function RelatorioTab({ lancamento, leads }: { lancamento: Launch; leads: Launch
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-// ─── TrafegoTab ───────────────────────────────────────────────────────────────
+// ─── Trafego: Types & Constants ──────────────────────────────────────────────
 
 const DATE_PRESETS = [
   { value: 'today', label: 'Hoje' },
@@ -354,35 +355,184 @@ const DATE_PRESETS = [
 ];
 
 interface MetaInsights {
-  spend: string;
-  impressions: string;
-  reach: string;
-  clicks: string;
-  cpm: string;
-  cpc: string;
-  ctr: string;
-  leads: number;
-  cpl: number;
+  spend: string; impressions: string; reach: string; clicks: string;
+  cpm: string; cpc: string; ctr: string; leads: number; cpl: number;
 }
 
-function TrafegoTab({ lancamento, leads: crmLeads, onSaveMeta }: {
+interface Campanha {
+  id: string;
+  lancamento_id: string;
+  nome: string;
+  meta_campaign_id: string;
+  meta_ad_account_id: string;
+  meta_access_token: string;
+  ordem: number;
+}
+
+// ─── CampanhaBlock ────────────────────────────────────────────────────────────
+
+function CampanhaBlock({ campanha, leads, usdToBrl, datePreset, onUpdate, onDelete, onMoveUp, onMoveDown, canMoveUp, canMoveDown }: {
+  campanha: Campanha; leads: LaunchLead[]; usdToBrl: number; datePreset: string;
+  onUpdate: (id: string, data: Partial<Campanha>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onMoveUp: (id: string) => void; onMoveDown: (id: string) => void;
+  canMoveUp: boolean; canMoveDown: boolean;
+}) {
+  const [editingConfig, setEditingConfig] = useState(!campanha.meta_campaign_id);
+  const [editingName, setEditingName] = useState(false);
+  const [form, setForm] = useState({
+    nome: campanha.nome,
+    meta_campaign_id: campanha.meta_campaign_id || '',
+    meta_ad_account_id: campanha.meta_ad_account_id || '',
+    meta_access_token: campanha.meta_access_token || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [insights, setInsights] = useState<MetaInsights | null>(null);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [usdCurrency, setUsdCurrency] = useState(false);
+
+  const configured = !!campanha.meta_campaign_id && !!campanha.meta_access_token;
+
+  const fetchInsights = async () => {
+    if (!campanha.meta_campaign_id || !campanha.meta_access_token) return;
+    setLoadingInsights(true); setError(null);
+    try {
+      const fields = 'spend,impressions,reach,clicks,cpm,cpc,ctr,actions';
+      const url = `https://graph.facebook.com/v19.0/${campanha.meta_campaign_id}/insights?fields=${fields}&date_preset=${datePreset}&access_token=${campanha.meta_access_token}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.error) { setError(json.error.message); return; }
+      const d = json.data?.[0];
+      if (!d) { setInsights(null); return; }
+      const leadAction = d.actions?.find((a: any) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
+      const leadsCount = leadAction ? parseFloat(leadAction.value) : 0;
+      const spend = parseFloat(d.spend || '0');
+      setUsdCurrency(true);
+      setInsights({ spend: d.spend || '0', impressions: d.impressions || '0', reach: d.reach || '0', clicks: d.clicks || '0', cpm: d.cpm || '0', cpc: d.cpc || '0', ctr: d.ctr || '0', leads: leadsCount, cpl: leadsCount > 0 ? spend / leadsCount : 0 });
+    } catch (e: any) { setError(e.message); }
+    finally { setLoadingInsights(false); }
+  };
+
+  useEffect(() => { if (configured) fetchInsights(); }, [campanha.meta_campaign_id, campanha.meta_access_token, datePreset]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onUpdate(campanha.id, { nome: form.nome, meta_campaign_id: form.meta_campaign_id, meta_ad_account_id: form.meta_ad_account_id, meta_access_token: form.meta_access_token });
+    setEditingConfig(false);
+    setSaving(false);
+  };
+
+  const conv = (v: number) => usdCurrency ? v * usdToBrl : v;
+  const fmt = (v: number) => conv(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtInt = (v: string) => parseInt(v).toLocaleString('pt-BR');
+
+  return (
+    <div className="border border-border rounded-xl bg-white overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 border-b border-border">
+        <div className="flex flex-col gap-0.5">
+          <button onClick={() => onMoveUp(campanha.id)} disabled={!canMoveUp} className="p-0.5 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+            <ChevronUp className="h-3 w-3" />
+          </button>
+          <button onClick={() => onMoveDown(campanha.id)} disabled={!canMoveDown} className="p-0.5 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </div>
+
+        {editingName ? (
+          <input autoFocus className="text-sm font-semibold bg-white border border-border rounded px-2 py-0.5 flex-1 max-w-[200px]"
+            value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))}
+            onBlur={async () => { setEditingName(false); await onUpdate(campanha.id, { nome: form.nome }); }}
+            onKeyDown={e => { if (e.key === 'Enter') { setEditingName(false); onUpdate(campanha.id, { nome: form.nome }); } }} />
+        ) : (
+          <button onClick={() => setEditingName(true)} className="text-sm font-semibold flex items-center gap-1 hover:text-primary">
+            {campanha.nome} <Pencil className="h-3 w-3 opacity-40" />
+          </button>
+        )}
+
+        <div className="flex-1" />
+        <button onClick={() => setEditingConfig(e => !e)} className="text-xs text-primary hover:underline flex items-center gap-1">
+          <Pencil className="h-3 w-3" /> {editingConfig ? 'Cancelar' : 'Configurar'}
+        </button>
+        <button onClick={() => onDelete(campanha.id)} className="text-xs text-destructive hover:underline flex items-center gap-1 ml-2">
+          <Trash2 className="h-3 w-3" /> Remover
+        </button>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {editingConfig && (
+          <div className="bg-muted/20 border border-border rounded-lg p-4 space-y-3">
+            <p className="text-xs text-muted-foreground">Vincule a campanha do Meta Ads:</p>
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label className="text-xs font-medium">ID da Campanha</label>
+                <Input placeholder="ex: 120202XXXXXXXXX" value={form.meta_campaign_id} onChange={e => setForm(f => ({ ...f, meta_campaign_id: e.target.value }))} className="mt-1 text-sm" />
+                <p className="text-[10px] text-muted-foreground mt-1">Gerenciador de Anúncios → campanha → número na URL</p>
+              </div>
+              <div>
+                <label className="text-xs font-medium">ID da Conta de Anúncios</label>
+                <Input placeholder="ex: act_XXXXXXXXXX" value={form.meta_ad_account_id} onChange={e => setForm(f => ({ ...f, meta_ad_account_id: e.target.value }))} className="mt-1 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-medium">Token de Acesso</label>
+                <Input type="password" placeholder="Token do Usuário do Sistema Meta" value={form.meta_access_token} onChange={e => setForm(f => ({ ...f, meta_access_token: e.target.value }))} className="mt-1 text-sm" />
+                <p className="text-[10px] text-muted-foreground mt-1">Business Manager → Configurações → Usuários do Sistema → Gerar token (permissão: ads_read)</p>
+              </div>
+            </div>
+            <Button onClick={handleSave} disabled={saving} size="sm" className="bg-primary hover:bg-primary/90 text-white">
+              {saving ? 'Salvando...' : 'Salvar configuração'}
+            </Button>
+          </div>
+        )}
+
+        {!configured && !editingConfig && (
+          <div className="text-center py-8 text-muted-foreground">
+            <BarChart2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">Nenhuma campanha vinculada.</p>
+            <button onClick={() => setEditingConfig(true)} className="text-primary text-sm hover:underline mt-1">Configurar agora</button>
+          </div>
+        )}
+
+        {configured && !editingConfig && (
+          <div className="space-y-3">
+            {usdCurrency && usdToBrl > 1 && <p className="text-[10px] text-muted-foreground">Valores convertidos de USD → BRL (cotação: R$ {usdToBrl.toFixed(2)})</p>}
+            {loadingInsights && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando métricas...</div>}
+            {error && <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-lg">Erro: {error}</div>}
+            {insights && !loadingInsights && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Gasto Total</p><p className="text-xl font-bold mt-1">R$ {fmt(parseFloat(insights.spend))}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Leads Gerados</p><p className="text-xl font-bold text-primary mt-1">{insights.leads.toLocaleString('pt-BR')}</p><p className="text-[10px] text-muted-foreground">{leads.length} no CRM</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CPL</p><p className="text-xl font-bold mt-1">R$ {fmt(insights.cpl)}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Alcance</p><p className="text-xl font-bold mt-1">{fmtInt(insights.reach)}</p><p className="text-[10px] text-muted-foreground">{fmtInt(insights.impressions)} impressões</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CTR</p><p className="text-xl font-bold mt-1">{parseFloat(insights.ctr).toFixed(2)}%</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CPC</p><p className="text-xl font-bold mt-1">R$ {fmt(parseFloat(insights.cpc))}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CPM</p><p className="text-xl font-bold mt-1">R$ {fmt(parseFloat(insights.cpm))}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Cliques</p><p className="text-xl font-bold mt-1">{fmtInt(insights.clicks)}</p></div>
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <p className="text-[10px] text-muted-foreground">ID: <span className="font-mono">{campanha.meta_campaign_id}</span></p>
+              <button onClick={fetchInsights} className="text-xs text-primary hover:underline flex items-center gap-1"><TrendingUp className="h-3 w-3" /> Atualizar</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── TrafegoTab ───────────────────────────────────────────────────────────────
+
+function TrafegoTab({ lancamento, leads: crmLeads }: {
   lancamento: Launch;
   leads: LaunchLead[];
-  onSaveMeta: (data: { meta_campaign_id: string; meta_ad_account_id: string; meta_access_token: string }) => Promise<void>;
 }) {
-  const [config, setConfig] = useState({
-    meta_campaign_id: lancamento.meta_campaign_id || '',
-    meta_ad_account_id: lancamento.meta_ad_account_id || '',
-    meta_access_token: lancamento.meta_access_token || '',
-  });
-  const [editingConfig, setEditingConfig] = useState(!lancamento.meta_campaign_id);
+  const [campanhas, setCampanhas] = useState<Campanha[]>([]);
   const [datePreset, setDatePreset] = useState('this_month');
-  const [insights, setInsights] = useState<MetaInsights | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [savingConfig, setSavingConfig] = useState(false);
   const [usdToBrl, setUsdToBrl] = useState<number>(1);
-  const [usdCurrency, setUsdCurrency] = useState(false);
+  const [loadingCampanhas, setLoadingCampanhas] = useState(true);
+  const [addingCampanha, setAddingCampanha] = useState(false);
 
   useEffect(() => {
     fetch('https://economia.awesomeapi.com.br/last/USD-BRL')
@@ -391,177 +541,96 @@ function TrafegoTab({ lancamento, leads: crmLeads, onSaveMeta }: {
       .catch(() => {});
   }, []);
 
-  const fetchInsights = async () => {
-    if (!lancamento.meta_campaign_id || !lancamento.meta_access_token) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const fields = 'spend,impressions,reach,clicks,cpm,cpc,ctr,actions';
-      const url = `https://graph.facebook.com/v19.0/${lancamento.meta_campaign_id}/insights?fields=${fields}&date_preset=${datePreset}&access_token=${lancamento.meta_access_token}`;
-      const res = await fetch(url);
-      const json = await res.json();
-      if (json.error) { setError(json.error.message); return; }
-      const d = json.data?.[0];
-      if (!d) { setInsights(null); return; }
-      const leadAction = d.actions?.find((a: any) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
-      const leads = leadAction ? parseFloat(leadAction.value) : 0;
-      const spend = parseFloat(d.spend || '0');
-      setUsdCurrency(json.data?.[0]?.account_currency === 'USD' || true);
-      setInsights({
-        spend: d.spend || '0',
-        impressions: d.impressions || '0',
-        reach: d.reach || '0',
-        clicks: d.clicks || '0',
-        cpm: d.cpm || '0',
-        cpc: d.cpc || '0',
-        ctr: d.ctr || '0',
-        leads,
-        cpl: leads > 0 ? spend / leads : 0,
-      });
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    if (lancamento.meta_campaign_id && lancamento.meta_access_token) fetchInsights();
-  }, [lancamento.meta_campaign_id, lancamento.meta_access_token, datePreset]);
+    const load = async () => {
+      setLoadingCampanhas(true);
+      const { data } = await supabase.from('lancamento_campanhas').select('*').eq('lancamento_id', lancamento.id).order('ordem', { ascending: true });
+      setCampanhas((data || []) as Campanha[]);
+      setLoadingCampanhas(false);
+    };
+    load();
+  }, [lancamento.id]);
 
-  const handleSaveConfig = async () => {
-    setSavingConfig(true);
-    await onSaveMeta(config);
-    setEditingConfig(false);
-    setSavingConfig(false);
+  const handleAddCampanha = async () => {
+    setAddingCampanha(true);
+    const nextOrdem = campanhas.length > 0 ? Math.max(...campanhas.map(c => c.ordem)) + 1 : 0;
+    const { data, error } = await supabase.from('lancamento_campanhas').insert({ lancamento_id: lancamento.id, nome: `Campanha ${campanhas.length + 1}`, ordem: nextOrdem }).select().single();
+    if (!error && data) { setCampanhas(prev => [...prev, data as Campanha]); toast.success('Campanha criada!'); }
+    setAddingCampanha(false);
   };
 
-  const conv = (v: number) => usdCurrency ? v * usdToBrl : v;
-  const fmt = (v: number) => conv(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtInt = (v: string) => parseInt(v).toLocaleString('pt-BR');
+  const handleUpdate = async (id: string, data: Partial<Campanha>) => {
+    const { error } = await supabase.from('lancamento_campanhas').update(data as any).eq('id', id);
+    if (error) { toast.error('Erro ao salvar'); return; }
+    setCampanhas(prev => prev.map(c => c.id === id ? { ...c, ...data } : c));
+    toast.success('Salvo!');
+  };
 
-  const configured = !!lancamento.meta_campaign_id && !!lancamento.meta_access_token;
+  const handleDelete = async (id: string) => {
+    const { error } = await supabase.from('lancamento_campanhas').delete().eq('id', id);
+    if (error) { toast.error('Erro ao remover'); return; }
+    setCampanhas(prev => prev.filter(c => c.id !== id));
+    toast.success('Campanha removida!');
+  };
+
+  const handleMove = (id: string, dir: 'up' | 'down') => {
+    const idx = campanhas.findIndex(c => c.id === id);
+    if ((dir === 'up' && idx === 0) || (dir === 'down' && idx === campanhas.length - 1)) return;
+    const newList = [...campanhas];
+    const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
+    [newList[idx], newList[swapIdx]] = [newList[swapIdx], newList[idx]];
+    const updated = newList.map((c, i) => ({ ...c, ordem: i }));
+    setCampanhas(updated);
+    Promise.all(updated.map(c => supabase.from('lancamento_campanhas').update({ ordem: c.ordem }).eq('id', c.id)));
+  };
+
+  const hasConfigured = campanhas.some(c => c.meta_campaign_id && c.meta_access_token);
 
   return (
     <div className="p-6 space-y-6">
-      {/* Config */}
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-base flex items-center gap-2">
           <BarChart2 className="h-4 w-4 text-primary" /> Gestão de Tráfego — Meta Ads
         </h3>
-        <button onClick={() => setEditingConfig(e => !e)} className="text-xs text-primary hover:underline flex items-center gap-1">
-          <Pencil className="h-3 w-3" /> {editingConfig ? 'Cancelar' : 'Configurar campanha'}
-        </button>
+        <Button onClick={handleAddCampanha} disabled={addingCampanha} size="sm" className="bg-primary hover:bg-primary/90 text-white gap-1">
+          <Plus className="h-3 w-3" /> {addingCampanha ? 'Criando...' : 'Nova Campanha'}
+        </Button>
       </div>
 
-      {editingConfig && (
-        <div className="bg-muted/30 border border-border rounded-lg p-4 space-y-3">
-          <p className="text-xs text-muted-foreground">Vincule a campanha do Meta Ads desta turma:</p>
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <label className="text-xs font-medium text-foreground">ID da Campanha</label>
-              <Input placeholder="ex: 120202XXXXXXXXX" value={config.meta_campaign_id} onChange={e => setConfig(c => ({ ...c, meta_campaign_id: e.target.value }))} className="mt-1 text-sm" />
-              <p className="text-[10px] text-muted-foreground mt-1">Gerenciador de Anúncios → campanha → número na URL</p>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-foreground">ID da Conta de Anúncios</label>
-              <Input placeholder="ex: act_XXXXXXXXXX" value={config.meta_ad_account_id} onChange={e => setConfig(c => ({ ...c, meta_ad_account_id: e.target.value }))} className="mt-1 text-sm" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-foreground">Token de Acesso</label>
-              <Input type="password" placeholder="Token do Usuário do Sistema Meta" value={config.meta_access_token} onChange={e => setConfig(c => ({ ...c, meta_access_token: e.target.value }))} className="mt-1 text-sm" />
-              <p className="text-[10px] text-muted-foreground mt-1">Business Manager → Configurações → Usuários do Sistema → Gerar token (permissão: ads_read)</p>
-            </div>
-          </div>
-          <Button onClick={handleSaveConfig} disabled={savingConfig} size="sm" className="bg-primary hover:bg-primary/90 text-white">
-            {savingConfig ? 'Salvando...' : 'Salvar configuração'}
-          </Button>
-        </div>
-      )}
-
-      {!configured && !editingConfig && (
-        <div className="text-center py-12 text-muted-foreground">
-          <BarChart2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">Nenhuma campanha vinculada.</p>
-          <button onClick={() => setEditingConfig(true)} className="text-primary text-sm hover:underline mt-1">Configurar agora</button>
-        </div>
-      )}
-
-      {configured && !editingConfig && (
-        <>
-          {/* Seletor de período */}
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-muted-foreground">Período:</span>
-            <div className="flex gap-1">
-              {DATE_PRESETS.map(p => (
-                <button key={p.value} onClick={() => setDatePreset(p.value)}
-                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${datePreset === p.value ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                  {p.label}
-                </button>
-              ))}
-              <button onClick={fetchInsights} className="px-3 py-1 rounded text-xs bg-muted text-muted-foreground hover:bg-muted/70 flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" /> Atualizar
+      {hasConfigured && (
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">Período:</span>
+          <div className="flex gap-1 flex-wrap">
+            {DATE_PRESETS.map(p => (
+              <button key={p.value} onClick={() => setDatePreset(p.value)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${datePreset === p.value ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                {p.label}
               </button>
-            </div>
+            ))}
           </div>
-
-          {usdCurrency && usdToBrl > 1 && (
-            <p className="text-[10px] text-muted-foreground">Valores convertidos de USD → BRL (cotação: R$ {usdToBrl.toFixed(2)})</p>
-          )}
-          {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando métricas...</div>}
-          {error && <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-lg">Erro: {error}</div>}
-
-          {insights && !loading && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {/* Gasto */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">Gasto Total</p>
-                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(parseFloat(insights.spend))}</p>
-              </div>
-              {/* Leads */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">Leads Gerados</p>
-                <p className="text-2xl font-bold text-primary mt-1">{insights.leads.toLocaleString('pt-BR')}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{crmLeads.length} no CRM</p>
-              </div>
-              {/* CPL */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">CPL (Custo por Lead)</p>
-                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(insights.cpl)}</p>
-              </div>
-              {/* Alcance */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">Alcance</p>
-                <p className="text-2xl font-bold text-foreground mt-1">{fmtInt(insights.reach)}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{fmtInt(insights.impressions)} impressões</p>
-              </div>
-              {/* CTR */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">CTR</p>
-                <p className="text-2xl font-bold text-foreground mt-1">{parseFloat(insights.ctr).toFixed(2)}%</p>
-              </div>
-              {/* CPC */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">CPC</p>
-                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(parseFloat(insights.cpc))}</p>
-              </div>
-              {/* CPM */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">CPM</p>
-                <p className="text-2xl font-bold text-foreground mt-1">R$ {fmt(parseFloat(insights.cpm))}</p>
-              </div>
-              {/* Clicks */}
-              <div className="bg-white border border-border rounded-lg p-4">
-                <p className="text-xs text-muted-foreground">Cliques no Link</p>
-                <p className="text-2xl font-bold text-foreground mt-1">{fmtInt(insights.clicks)}</p>
-              </div>
-            </div>
-          )}
-
-          {/* ID da campanha vinculada */}
-          <p className="text-[10px] text-muted-foreground">Campanha vinculada: <span className="font-mono">{lancamento.meta_campaign_id}</span></p>
-        </>
+        </div>
       )}
+
+      {loadingCampanhas && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando campanhas...</div>}
+
+      {!loadingCampanhas && campanhas.length === 0 && (
+        <div className="text-center py-16 text-muted-foreground border border-dashed border-border rounded-xl">
+          <BarChart2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">Nenhuma campanha criada ainda.</p>
+          <button onClick={handleAddCampanha} className="text-primary text-sm hover:underline mt-2 flex items-center gap-1 mx-auto">
+            <Plus className="h-3 w-3" /> Criar primeira campanha
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {campanhas.map((campanha, idx) => (
+          <CampanhaBlock key={campanha.id} campanha={campanha} leads={crmLeads} usdToBrl={usdToBrl} datePreset={datePreset}
+            onUpdate={handleUpdate} onDelete={handleDelete}
+            onMoveUp={(id) => handleMove(id, 'up')} onMoveDown={(id) => handleMove(id, 'down')}
+            canMoveUp={idx > 0} canMoveDown={idx < campanhas.length - 1} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -856,21 +925,6 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     toast.success('Metas salvas!');
   };
 
-  // ── Save tráfego config ──────────────────────────────────────────────────────
-  const handleSaveTrafegoConfig = async (data: { meta_campaign_id: string; meta_ad_account_id: string; meta_access_token: string }) => {
-    const lsKey = `trafego_config_${lancamentoId}`;
-    const { error } = await supabase.from('lancamentos').update(data as any).eq('id', lancamentoId);
-    if (error) {
-      localStorage.setItem(lsKey, JSON.stringify(data));
-      setLancamento(prev => prev ? { ...prev, ...data } : prev);
-      toast.success('Campanha vinculada! (salvo localmente)');
-      return;
-    }
-    localStorage.removeItem(lsKey);
-    setLancamento(prev => prev ? { ...prev, ...data } : prev);
-    toast.success('Campanha vinculada!');
-  };
-
   // ── Save valor matrícula ────────────────────────────────────────────────────
   const handleSaveValor = async () => {
     const v = parseFloat(valorInput.replace(',', '.'));
@@ -1063,7 +1117,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
       {/* ── Tráfego Tab ── */}
       {activeView === 'trafego' && (
-        <TrafegoTab lancamento={lancamento} leads={leads} onSaveMeta={handleSaveTrafegoConfig} />
+        <TrafegoTab lancamento={lancamento} leads={leads} />
       )}
 
       {/* ── Relatorio Tab ── */}
