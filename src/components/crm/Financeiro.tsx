@@ -136,6 +136,7 @@ export function Financeiro() {
     return turmas.filter(t => {
       if ((t.tipo || t.produto) !== activeTab) return false;
       if (isAdmin) return true;
+      if (!permissions) return true;
       return canAccessFinanceiroTurma(permissions, t.id);
     });
   }, [turmas, activeTab, permissions, isAdmin]);
@@ -143,6 +144,7 @@ export function Financeiro() {
     let r = alunos.filter(a => {
       if (a.produto !== activeTab) return false;
       if (isAdmin) return true;
+      if (!permissions) return true;
       return canAccessFinanceiroTurma(permissions, a.turma_id);
     });
     if (selectedTurmaId !== 'todas') r = r.filter(a => a.turma_id === selectedTurmaId);
