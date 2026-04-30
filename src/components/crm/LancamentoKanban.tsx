@@ -10,7 +10,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
 } from '@/components/ui/dialog';
 import {
   Plus, Search, AlertCircle, Users, Target, DollarSign,
@@ -646,6 +646,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const [loading, setLoading] = useState(true);
   const [activeView, setActiveView] = useState<ActiveView>('kanban');
   const [isAddingLead, setIsAddingLead] = useState(false);
+  const [showAddLeadDialog, setShowAddLeadDialog] = useState(false);
   const [newLeadForm, setNewLeadForm] = useState({ nome: '', whatsapp: '', email: '' });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState<LaunchLead | null>(null);
@@ -780,10 +781,11 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       .channel(`launch-leads-${lancamentoId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'lancamento_leads' },
+        { event: '*', schema: 'public', table: 'lancamento_leads', filter: `lancamento_id=eq.${lancamentoId}` },
         (payload) => {
           if (payload.eventType === 'INSERT') {
-            setLeads(prev => [payload.new as LaunchLead, ...prev]);
+            const newLead = payload.new as LaunchLead;
+            setLeads(prev => prev.some(l => l.id === newLead.id) ? prev : [newLead, ...prev]);
           } else if (payload.eventType === 'UPDATE') {
             const updated = payload.new as LaunchLead;
             setLeads(prev =>
@@ -859,20 +861,24 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     const primeiraColuna = colunasRef.current[0];
     if (!primeiraColuna) { toast.error('Nenhuma coluna encontrada'); return; }
     setIsAddingLead(true);
-    const { error } = await supabase.from('lancamento_leads').insert({
+    const { data: inserted, error } = await supabase.from('lancamento_leads').insert({
       lancamento_id: lancamentoId,
       nome: newLeadForm.nome,
       whatsapp: newLeadForm.whatsapp,
       email: newLeadForm.email || null,
-      fase: primeiraColuna.id,  // always UUID
+      fase: primeiraColuna.id,
       no_grupo: false,
       grupo_oferta: false,
       matriculado: false,
       responsavel_id: vinicius?.id,
       created_at: new Date().toISOString(),
-    });
-    if (!error) setNewLeadForm({ nome: '', whatsapp: '', email: '' });
+    }).select('*').single();
     setIsAddingLead(false);
+    if (error) { toast.error('Erro ao adicionar lead: ' + error.message); return; }
+    if (inserted) setLeads(prev => [inserted as LaunchLead, ...prev]);
+    setNewLeadForm({ nome: '', whatsapp: '', email: '' });
+    setShowAddLeadDialog(false);
+    toast.success('Lead adicionado!');
   };
 
   // ── Toggle active ───────────────────────────────────────────────────────────
@@ -1141,46 +1147,44 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                 className="pl-10"
               />
             </div>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="default" className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Adicionar Lead
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Adicionar Lead</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <input
-                    placeholder="Nome"
-                    value={newLeadForm.nome}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, nome: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                  <input
-                    placeholder="WhatsApp"
-                    value={newLeadForm.whatsapp}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, whatsapp: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                  <input
-                    placeholder="Email (opcional)"
-                    value={newLeadForm.email}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, email: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                  <Button onClick={handleAddLead} disabled={isAddingLead} className="w-full">
-                    {isAddingLead ? 'Adicionando...' : 'Adicionar'}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+            <Button variant="default" className="gap-2" onClick={() => setShowAddLeadDialog(true)}>
+              <Plus className="h-4 w-4" />
+              Adicionar Lead
+            </Button>
           </div>
 
+          {/* Search Results (flat list) */}
+          {searchQuery && (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">{filteredLeads.length} resultado(s) para "{searchQuery}"</p>
+              {filteredLeads.length === 0 && (
+                <div className="text-center py-10 text-muted-foreground border border-dashed border-border rounded-lg">
+                  Nenhum lead encontrado.
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {filteredLeads.map(lead => {
+                  const coluna = colunas.find(c => c.id === lead.fase);
+                  return (
+                    <div key={lead.id} className={`p-3 rounded-lg border ${lead.matriculado ? 'bg-green-50 border-green-200' : 'bg-white border-border'} shadow-sm`}>
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <span className="font-medium text-sm flex-1">{lead.nome}</span>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button onClick={() => handleOpenEditLead(lead)} className="text-muted-foreground hover:text-foreground"><Pencil className="h-3 w-3" /></button>
+                          <button onClick={e => { e.stopPropagation(); setLeadToDelete(lead); }} className="text-muted-foreground hover:text-red-500"><Trash2 className="h-3 w-3" /></button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">{lead.whatsapp}</p>
+                      {coluna && <span className="mt-1 inline-block text-[10px] bg-muted text-muted-foreground px-2 py-0.5 rounded">{coluna.nome}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Board */}
-          <div className="overflow-x-auto">
+          {!searchQuery && <div className="overflow-x-auto">
             <div className="flex gap-4 min-w-full pb-4 items-start">
               {colunas.map(coluna => {
                 const colLeads = getLeadsByColuna(coluna.id);
@@ -1270,9 +1274,41 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                 disabled={lancamento.status === 'finalizado'}
               />
             </div>
-          </div>
+          </div>}
         </>
       )}
+
+      {/* ── Add Lead Modal ── */}
+      <Dialog open={showAddLeadDialog} onOpenChange={open => { if (!open) { setShowAddLeadDialog(false); setNewLeadForm({ nome: '', whatsapp: '', email: '' }); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adicionar Lead</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder="Nome *"
+              value={newLeadForm.nome}
+              onChange={e => setNewLeadForm({ ...newLeadForm, nome: e.target.value })}
+            />
+            <Input
+              placeholder="WhatsApp *"
+              value={newLeadForm.whatsapp}
+              onChange={e => setNewLeadForm({ ...newLeadForm, whatsapp: e.target.value })}
+            />
+            <Input
+              placeholder="Email (opcional)"
+              value={newLeadForm.email}
+              onChange={e => setNewLeadForm({ ...newLeadForm, email: e.target.value })}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowAddLeadDialog(false)}>Cancelar</Button>
+              <Button onClick={handleAddLead} disabled={isAddingLead || !newLeadForm.nome || !newLeadForm.whatsapp}>
+                {isAddingLead ? 'Adicionando...' : 'Adicionar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Edit Valor Matrícula Modal ── */}
       <Dialog open={editingValor} onOpenChange={setEditingValor}>
