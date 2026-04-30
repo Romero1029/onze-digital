@@ -650,7 +650,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState<LaunchLead | null>(null);
   const [editingLead, setEditingLead] = useState<LaunchLead | null>(null);
-  const [editLeadForm, setEditLeadForm] = useState({ nome: '', whatsapp: '', email: '', observacoes: '' });
+  const [editLeadForm, setEditLeadForm] = useState({ nome: '', whatsapp: '', email: '', observacoes: '', matriculado: false });
   const [editingValor, setEditingValor] = useState(false);
   const [valorInput, setValorInput] = useState('');
 
@@ -947,6 +947,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       whatsapp: lead.whatsapp,
       email: lead.email ?? '',
       observacoes: lead.observacoes ?? '',
+      matriculado: lead.matriculado,
     });
   };
 
@@ -959,6 +960,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         whatsapp: editLeadForm.whatsapp,
         email: editLeadForm.email || null,
         observacoes: editLeadForm.observacoes || null,
+        matriculado: editLeadForm.matriculado,
       })
       .eq('id', editingLead.id);
     if (error) { toast.error('Erro ao salvar lead'); return; }
@@ -1373,6 +1375,18 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Observações</label>
               <Input value={editLeadForm.observacoes} onChange={e => setEditLeadForm(f => ({ ...f, observacoes: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Status do Contrato</label>
+              <Select value={editLeadForm.matriculado ? 'sim' : 'nao'} onValueChange={v => setEditLeadForm(f => ({ ...f, matriculado: v === 'sim' }))}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nao">Sem contrato</SelectItem>
+                  <SelectItem value="sim">Contrato assinado ✅</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex justify-end gap-2 mt-2">
               <Button variant="outline" onClick={() => setEditingLead(null)}>Cancelar</Button>
