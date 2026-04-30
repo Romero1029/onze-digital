@@ -37,12 +37,18 @@ interface Aluno {
   nome: string;
   whatsapp?: string;
   email?: string;
+  cpf?: string;
   dia_vencimento?: number;
   status: 'ativo' | 'inadimplente' | 'cancelado' | 'concluido';
   mensalidades_pagas?: number;
   data_inicio?: string;
   origem_lead?: string;
   valor_mensalidade?: number;
+  forma_pagamento?: string;
+  contrato_enviado?: boolean;
+  contrato_enviado_em?: string;
+  contrato_assinado?: boolean;
+  contrato_assinado_em?: string;
   created_at: string;
 }
 
@@ -119,7 +125,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
         supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, created_at').order('created_at', { ascending: false }).limit(200),
-        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, dia_vencimento, status, mensalidades_pagas, data_inicio, origem_lead, valor_mensalidade, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, dia_vencimento, status, mensalidades_pagas, data_inicio, origem_lead, valor_mensalidade, forma_pagamento, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, created_at').order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
       ]);
       if (turmasRes.data) setTurmas(turmasRes.data);
@@ -275,6 +281,7 @@ export function Financeiro() {
       nome: a.nome,
       whatsapp: a.whatsapp || '',
       email: a.email || '',
+      cpf: a.cpf || '',
       turma_id: a.turma_id,
       dia_vencimento: a.dia_vencimento,
       data_inicio: a.data_inicio || '',
@@ -282,6 +289,9 @@ export function Financeiro() {
       origem_lead: a.origem_lead || '',
       mensalidades_pagas: a.mensalidades_pagas || 0,
       valor_mensalidade: a.valor_mensalidade ?? undefined,
+      forma_pagamento: a.forma_pagamento || '',
+      contrato_enviado: a.contrato_enviado ?? false,
+      contrato_assinado: a.contrato_assinado ?? false,
     });
     setShowAlunoDetail(true);
   };
@@ -294,6 +304,7 @@ export function Financeiro() {
         nome: editAlunoForm.nome || alunoDetail.nome,
         whatsapp: editAlunoForm.whatsapp || null,
         email: editAlunoForm.email || null,
+        cpf: editAlunoForm.cpf || null,
         turma_id: editAlunoForm.turma_id || alunoDetail.turma_id,
         dia_vencimento: editAlunoForm.dia_vencimento || null,
         data_inicio: editAlunoForm.data_inicio || null,
@@ -301,6 +312,9 @@ export function Financeiro() {
         origem_lead: editAlunoForm.origem_lead || null,
         mensalidades_pagas: editAlunoForm.mensalidades_pagas ?? alunoDetail.mensalidades_pagas,
         valor_mensalidade: editAlunoForm.valor_mensalidade || null,
+        forma_pagamento: editAlunoForm.forma_pagamento || null,
+        contrato_enviado: editAlunoForm.contrato_enviado ?? false,
+        contrato_assinado: editAlunoForm.contrato_assinado ?? false,
       };
       const { error } = await supabase.from('alunos').update(updateData).eq('id', alunoDetail.id);
       // Se valor personalizado definido, atualiza parcelas pendentes deste aluno
@@ -717,6 +731,38 @@ export function Financeiro() {
                   <label className="text-xs font-medium text-muted-foreground uppercase">Valor Personalizado (R$)</label>
                   <Input type="number" step="0.01" value={editAlunoForm.valor_mensalidade ?? ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, valor_mensalidade: e.target.value ? parseFloat(e.target.value) : undefined })} placeholder={`Padrão da turma`} className="mt-1" />
                   <p className="text-[10px] text-muted-foreground mt-1">Deixe vazio para usar o valor da turma. Ao salvar, parcelas pendentes serão atualizadas.</p>
+                </div>
+                <div><label className="text-xs font-medium text-muted-foreground uppercase">CPF</label><Input value={editAlunoForm.cpf || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, cpf: e.target.value })} placeholder="000.000.000-00" className="mt-1" /></div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase">Forma de Pagamento</label>
+                  <Select value={editAlunoForm.forma_pagamento || ''} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, forma_pagamento: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="boleto">Boleto 1+14</SelectItem>
+                      <SelectItem value="cartao">Cartão 12x</SelectItem>
+                      <SelectItem value="pix">PIX à vista</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase">Contrato Enviado</label>
+                  <Select value={editAlunoForm.contrato_enviado ? 'sim' : 'nao'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, contrato_enviado: v === 'sim' })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="nao">Não enviado</SelectItem>
+                      <SelectItem value="sim">Enviado ✉️</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase">Status do Contrato</label>
+                  <Select value={editAlunoForm.contrato_assinado ? 'sim' : 'nao'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, contrato_assinado: v === 'sim' })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="nao">Não assinado</SelectItem>
+                      <SelectItem value="sim">Assinado ✅</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
