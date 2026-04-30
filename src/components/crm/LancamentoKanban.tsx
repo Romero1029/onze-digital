@@ -1164,7 +1164,6 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {filteredLeads.map(lead => {
-                  const coluna = colunas.find(c => c.id === lead.fase);
                   return (
                     <div key={lead.id} className={`p-3 rounded-lg border ${lead.matriculado ? 'bg-green-50 border-green-200' : 'bg-white border-border'} shadow-sm`}>
                       <div className="flex items-start justify-between gap-2 mb-1">
@@ -1175,7 +1174,20 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                         </div>
                       </div>
                       <p className="text-xs text-muted-foreground truncate">{lead.whatsapp}</p>
-                      {coluna && <span className="mt-1 inline-block text-[10px] bg-muted text-muted-foreground px-2 py-0.5 rounded">{coluna.nome}</span>}
+                      <Select
+                        value={lead.fase}
+                        onValueChange={value => handleMoveLead(lead.id, value)}
+                        disabled={lancamento.status === 'finalizado'}
+                      >
+                        <SelectTrigger className="mt-2 h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {colunas.map(c => (
+                            <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   );
                 })}
