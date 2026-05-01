@@ -156,9 +156,11 @@ export function Financeiro() {
     forma_pagamento: 'mensalidade' as 'mensalidade' | 'parcelado' | 'avista',
   });
 
-  // Observações do aluno (edição inline no modal)
+  // Observações e forma de pagamento editáveis no modal
   const [obsValue, setObsValue] = useState('');
   const [savingObs, setSavingObs] = useState(false);
+  const [fpEdit, setFpEdit] = useState<'mensalidade' | 'parcelado' | 'avista'>('mensalidade');
+  const [savingFp, setSavingFp] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -428,7 +430,22 @@ export function Financeiro() {
   const openParcelasModal = (aluno: Aluno) => {
     setAlunoParcelas(aluno);
     setObsValue(aluno.observacoes || '');
+    setFpEdit((aluno.forma_pagamento as any) || 'mensalidade');
     setShowParcelasDialog(true);
+  };
+
+  const saveFormaPagamento = async () => {
+    if (!alunoParcelas) return;
+    setSavingFp(true);
+    const valor = fpEdit === 'avista' ? 997 : fpEdit === 'parcelado' ? 109.49 : 110;
+    const { error } = await supabase.from('alunos')
+      .update({ forma_pagamento: fpEdit, valor_mensalidade: valor })
+      .eq('id', alunoParcelas.id);
+    setSavingFp(false);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao salvar forma de pagamento' }); return; }
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, forma_pagamento: fpEdit, valor_mensalidade: valor } : a));
+    setAlunoParcelas(prev => prev ? { ...prev, forma_pagamento: fpEdit } : prev);
+    toast({ title: 'Salvo!', description: 'Forma de pagamento atualizada.' });
   };
 
   const confirmDelete = (aluno: Aluno) => {
@@ -675,7 +692,8 @@ export function Financeiro() {
           {list.map(aluno => {
             const fp = fpLabel(aluno.forma_pagamento);
             const total = totalParcelas(aluno.forma_pagamento);
-            const turmaNome = turmas.find(t => t.id === aluno.turma_id)?.nome || '—';
+            const turmaNome = turmas.find(t => t.id === aluno.turma_id)?.nome
+              ?? (aluno.turma_id ? aluno.turma_id.substring(0, 8) + '…' : '—');
             return (
               <tr key={aluno.id} className="border-b border-border/50 hover:bg-muted/50">
                 <td className="py-3 px-4">
@@ -1090,6 +1108,32 @@ export function Financeiro() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* Forma de Pagamento (editável) */}
+              <div className="border-t border-border pt-4">
+                <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">Forma de Pagamento</h3>
+                <div className="flex items-center gap-3">
+                  <Select value={fpEdit} onValueChange={(v) => setFpEdit(v as any)}>
+                    <SelectTrigger className="max-w-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="mensalidade">Mensalidade — 14x R$ 110,00</SelectItem>
+                      <SelectItem value="parcelado">Cartão — 12x R$ 109,49</SelectItem>
+                      <SelectItem value="avista">À vista — R$ 997,00</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={saveFormaPagamento} disabled={savingFp}>
+                    {savingFp ? 'Salvando...' : 'Salvar'}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Atual: <strong>{fpLabel(alunoParcelas.forma_pagamento).label}</strong>
+                  {alunoParcelas.forma_pagamento === 'avista' && ' — R$ 997,00 único'}
+                  {alunoParcelas.forma_pagamento === 'parcelado' && ' — 12x R$ 109,49 no cartão'}
+                  {(!alunoParcelas.forma_pagamento || alunoParcelas.forma_pagamento === 'mensalidade') && ' — 14x R$ 110,00/mês'}
+                </p>
               </div>
 
               {/* Seção de Contrato (somente leitura) */}
