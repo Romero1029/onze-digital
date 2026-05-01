@@ -203,7 +203,7 @@ export function Financeiro() {
 
   // Dados filtrados por produto
   const filteredTurmas = useMemo(() => {
-    return turmas.filter(t => t.produto === activeTab);
+    return turmas.filter(t => !t.produto || t.produto === activeTab);
   }, [turmas, activeTab]);
 
   const filteredAlunos = useMemo(() => {
@@ -446,6 +446,24 @@ export function Financeiro() {
     setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, forma_pagamento: fpEdit, valor_mensalidade: valor } : a));
     setAlunoParcelas(prev => prev ? { ...prev, forma_pagamento: fpEdit } : prev);
     toast({ title: 'Salvo!', description: 'Forma de pagamento atualizada.' });
+  };
+
+  const toggleContratoEtapa = async (
+    campo: 'forms_respondido' | 'contrato_enviado' | 'contrato_assinado',
+    valor: boolean
+  ) => {
+    if (!alunoParcelas) return;
+    const campoEm = `${campo}_em` as keyof Aluno;
+    const updates: Record<string, any> = {
+      [campo]: valor,
+      [campoEm]: valor ? new Date().toISOString() : null,
+    };
+    const { error } = await supabase.from('alunos').update(updates).eq('id', alunoParcelas.id);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao atualizar contrato' }); return; }
+    const updated = { ...alunoParcelas, [campo]: valor, [campoEm]: valor ? new Date().toISOString() : undefined };
+    setAlunoParcelas(updated);
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, ...updates } : a));
+    toast({ title: 'Atualizado!', description: 'Status do contrato atualizado.' });
   };
 
   const confirmDelete = (aluno: Aluno) => {
@@ -1136,29 +1154,47 @@ export function Financeiro() {
                 </p>
               </div>
 
-              {/* Seção de Contrato (somente leitura) */}
+              {/* Seção de Contrato (editável) */}
               <div className="border-t border-border pt-4">
                 <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">Contrato</h3>
+
+                {/* Toggle buttons */}
+                <div className="space-y-2 mb-4">
+                  {(
+                    [
+                      { campo: 'forms_respondido', label: 'Forms respondido', em: alunoParcelas.forms_respondido_em },
+                      { campo: 'contrato_enviado', label: 'Contrato enviado', em: alunoParcelas.contrato_enviado_em },
+                      { campo: 'contrato_assinado', label: 'Contrato assinado', em: alunoParcelas.contrato_assinado_em },
+                    ] as const
+                  ).map(({ campo, label, em }) => {
+                    const checked = !!alunoParcelas[campo];
+                    return (
+                      <div key={campo} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium">{label}</p>
+                          {checked && em && (
+                            <p className="text-xs text-muted-foreground">{safeDate(em)}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => toggleContratoEtapa(campo, !checked)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                            checked ? 'bg-green-500' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                            checked ? 'translate-x-4' : 'translate-x-0.5'
+                          }`} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs text-muted-foreground">Status do contrato</span>
-                    <EtapaBadge etapa={getEtapaContrato(alunoParcelas)} />
-                  </div>
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs text-muted-foreground">CPF</span>
                     <span className="font-medium">{alunoParcelas.cpf || '—'}</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs text-muted-foreground">Forms respondido em</span>
-                    <span className="font-medium">{safeDate(alunoParcelas.forms_respondido_em)}</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs text-muted-foreground">Contrato enviado em</span>
-                    <span className="font-medium">{safeDate(alunoParcelas.contrato_enviado_em)}</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs text-muted-foreground">Contrato assinado em</span>
-                    <span className="font-medium">{safeDate(alunoParcelas.contrato_assinado_em)}</span>
                   </div>
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs text-muted-foreground">Endereço</span>
