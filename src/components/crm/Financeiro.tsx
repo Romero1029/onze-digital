@@ -438,7 +438,7 @@ export function Financeiro() {
     setFpEdit((aluno.forma_pagamento as any) || 'mensalidade');
     setTurmaEdit(aluno.turma_id || '__none__');
     setMensalidadesEdit(String(aluno.mensalidades_pagas ?? 0));
-    setDiaVencEdit(aluno.dia_vencimento === 10 ? '10' : aluno.dia_vencimento === 20 ? '20' : '__nenhum__');
+    setDiaVencEdit(aluno.dia_vencimento ? String(aluno.dia_vencimento) as any : '');
     setShowParcelasDialog(true);
   };
 
@@ -458,7 +458,7 @@ export function Financeiro() {
 
   const saveDiaVencimento = async () => {
     if (!alunoParcelas) return;
-    const val = (diaVencEdit && diaVencEdit !== '__nenhum__') ? parseInt(diaVencEdit) : null;
+    const val = diaVencEdit ? parseInt(diaVencEdit) : null;
     setSavingDiaVenc(true);
     const { error } = await supabase.from('alunos')
       .update({ dia_vencimento: val })
@@ -805,54 +805,50 @@ export function Financeiro() {
     </div>
   );
 
-  // ── Alunos View (existing content) ─────────────────────────────────────────
+  // ── Alunos View — agrupa dinamicamente por dia de vencimento ───────────────
   const AlunosView = () => {
-    const dia10 = filteredAlunos.filter(a => a.dia_vencimento === 10);
-    const dia20 = filteredAlunos.filter(a => a.dia_vencimento === 20);
-    const outros = filteredAlunos.filter(a => a.dia_vencimento !== 10 && a.dia_vencimento !== 20);
+    const dias = [...new Set(filteredAlunos.map(a => a.dia_vencimento).filter(Boolean))]
+      .sort((a, b) => (a as number) - (b as number)) as number[];
+    const semDia = filteredAlunos.filter(a => !a.dia_vencimento);
+
     return (
       <div className="space-y-6">
-        {/* Vence dia 10 */}
-        <Card className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold flex items-center gap-2">📅 Vence dia 10</h3>
-            <Badge variant="secondary">{dia10.length} alunos</Badge>
-          </div>
-          {dia10.length === 0 ? (
-            <div className="text-center py-8">
-              <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 10</p>
+        {dias.map(dia => (
+          <Card key={dia} className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-muted-foreground" />
+                Vence dia {dia}
+              </h3>
+              <Badge variant="secondary">
+                {filteredAlunos.filter(a => a.dia_vencimento === dia).length} alunos
+              </Badge>
             </div>
-          ) : (
-            <AlunoTable list={dia10} />
-          )}
-        </Card>
+            <AlunoTable list={filteredAlunos.filter(a => a.dia_vencimento === dia)} />
+          </Card>
+        ))}
 
-        {/* Vence dia 20 */}
-        <Card className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold flex items-center gap-2">📅 Vence dia 20</h3>
-            <Badge variant="secondary">{dia20.length} alunos</Badge>
-          </div>
-          {dia20.length === 0 ? (
-            <div className="text-center py-8">
-              <CalendarDays className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 20</p>
-            </div>
-          ) : (
-            <AlunoTable list={dia20} />
-          )}
-        </Card>
-
-        {/* Outros (sem vencimento definido / avista / n8n) */}
-        {outros.length > 0 && (
+        {semDia.length > 0 && (
           <Card className="p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold flex items-center gap-2">📋 Sem vencimento / À vista</h3>
-              <Badge variant="secondary">{outros.length} alunos</Badge>
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <CalendarDays className="h-5 w-5 text-muted-foreground" />
+                Vencimento não definido
+              </h3>
+              <Badge variant="secondary">{semDia.length} alunos</Badge>
             </div>
-            <AlunoTable list={outros} />
+            <p className="text-xs text-muted-foreground mb-3">
+              Clique no olho para definir o dia de vencimento de cada aluno.
+            </p>
+            <AlunoTable list={semDia} />
           </Card>
+        )}
+
+        {filteredAlunos.length === 0 && (
+          <div className="text-center py-16">
+            <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <p className="text-muted-foreground">Nenhum aluno encontrado</p>
+          </div>
         )}
       </div>
     );
@@ -1199,18 +1195,15 @@ export function Financeiro() {
                       <SelectValue placeholder="Selecione o dia" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__nenhum__">— Sem vencimento —</SelectItem>
-                      <SelectItem value="10">Dia 10</SelectItem>
-                      <SelectItem value="20">Dia 20</SelectItem>
+                      {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28].map(d => (
+                        <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <Button size="sm" onClick={saveDiaVencimento} disabled={savingDiaVenc}>
                     {savingDiaVenc ? 'Salvando...' : 'Salvar'}
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Define em qual grupo o aluno aparece na aba Alunos
-                </p>
               </div>
 
               {/* Turma (editável) */}
