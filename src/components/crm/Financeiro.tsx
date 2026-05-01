@@ -160,6 +160,10 @@ export function Financeiro() {
   const [savingObs, setSavingObs] = useState(false);
   const [fpEdit, setFpEdit] = useState<'mensalidade' | 'parcelado' | 'avista'>('mensalidade');
   const [savingFp, setSavingFp] = useState(false);
+  const [turmaEdit, setTurmaEdit] = useState('');
+  const [savingTurma, setSavingTurma] = useState(false);
+  const [mensalidadesEdit, setMensalidadesEdit] = useState('0');
+  const [savingMensalidades, setSavingMensalidades] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -430,6 +434,8 @@ export function Financeiro() {
     setAlunoParcelas(aluno);
     setObsValue(aluno.observacoes || '');
     setFpEdit((aluno.forma_pagamento as any) || 'mensalidade');
+    setTurmaEdit(aluno.turma_id || '');
+    setMensalidadesEdit(String(aluno.mensalidades_pagas ?? 0));
     setShowParcelasDialog(true);
   };
 
@@ -445,6 +451,33 @@ export function Financeiro() {
     setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, forma_pagamento: fpEdit, valor_mensalidade: valor } : a));
     setAlunoParcelas(prev => prev ? { ...prev, forma_pagamento: fpEdit } : prev);
     toast({ title: 'Salvo!', description: 'Forma de pagamento atualizada.' });
+  };
+
+  const saveTurmaId = async () => {
+    if (!alunoParcelas) return;
+    setSavingTurma(true);
+    const { error } = await supabase.from('alunos')
+      .update({ turma_id: turmaEdit || null })
+      .eq('id', alunoParcelas.id);
+    setSavingTurma(false);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao salvar turma' }); return; }
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, turma_id: turmaEdit } : a));
+    setAlunoParcelas(prev => prev ? { ...prev, turma_id: turmaEdit } : prev);
+    toast({ title: 'Salvo!', description: 'Turma atualizada.' });
+  };
+
+  const saveMensalidadesPagas = async () => {
+    if (!alunoParcelas) return;
+    const val = parseInt(mensalidadesEdit) || 0;
+    setSavingMensalidades(true);
+    const { error } = await supabase.from('alunos')
+      .update({ mensalidades_pagas: val })
+      .eq('id', alunoParcelas.id);
+    setSavingMensalidades(false);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao salvar parcelas' }); return; }
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, mensalidades_pagas: val } : a));
+    setAlunoParcelas(prev => prev ? { ...prev, mensalidades_pagas: val } : prev);
+    toast({ title: 'Salvo!', description: 'Parcelas pagas atualizadas.' });
   };
 
   const toggleContratoEtapa = async (
@@ -755,41 +788,57 @@ export function Financeiro() {
   );
 
   // ── Alunos View (existing content) ─────────────────────────────────────────
-  const AlunosView = () => (
-    <div className="space-y-6">
-      {/* Vence dia 10 */}
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold flex items-center gap-2">📅 Vence dia 10</h3>
-          <Badge variant="secondary">{filteredAlunos.filter(a => a.dia_vencimento === 10).length} alunos</Badge>
-        </div>
-        {filteredAlunos.filter(a => a.dia_vencimento === 10).length === 0 ? (
-          <div className="text-center py-8">
-            <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 10</p>
+  const AlunosView = () => {
+    const dia10 = filteredAlunos.filter(a => a.dia_vencimento === 10);
+    const dia20 = filteredAlunos.filter(a => a.dia_vencimento === 20);
+    const outros = filteredAlunos.filter(a => a.dia_vencimento !== 10 && a.dia_vencimento !== 20);
+    return (
+      <div className="space-y-6">
+        {/* Vence dia 10 */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold flex items-center gap-2">📅 Vence dia 10</h3>
+            <Badge variant="secondary">{dia10.length} alunos</Badge>
           </div>
-        ) : (
-          <AlunoTable list={filteredAlunos.filter(a => a.dia_vencimento === 10)} />
-        )}
-      </Card>
+          {dia10.length === 0 ? (
+            <div className="text-center py-8">
+              <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 10</p>
+            </div>
+          ) : (
+            <AlunoTable list={dia10} />
+          )}
+        </Card>
 
-      {/* Vence dia 20 */}
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold flex items-center gap-2">📅 Vence dia 20</h3>
-          <Badge variant="secondary">{filteredAlunos.filter(a => a.dia_vencimento === 20).length} alunos</Badge>
-        </div>
-        {filteredAlunos.filter(a => a.dia_vencimento === 20).length === 0 ? (
-          <div className="text-center py-8">
-            <CalendarDays className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 20</p>
+        {/* Vence dia 20 */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold flex items-center gap-2">📅 Vence dia 20</h3>
+            <Badge variant="secondary">{dia20.length} alunos</Badge>
           </div>
-        ) : (
-          <AlunoTable list={filteredAlunos.filter(a => a.dia_vencimento === 20)} />
+          {dia20.length === 0 ? (
+            <div className="text-center py-8">
+              <CalendarDays className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 20</p>
+            </div>
+          ) : (
+            <AlunoTable list={dia20} />
+          )}
+        </Card>
+
+        {/* Outros (sem vencimento definido / avista / n8n) */}
+        {outros.length > 0 && (
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">📋 Sem vencimento / À vista</h3>
+              <Badge variant="secondary">{outros.length} alunos</Badge>
+            </div>
+            <AlunoTable list={outros} />
+          </Card>
         )}
-      </Card>
-    </div>
-  );
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -1120,6 +1169,46 @@ export function Financeiro() {
                         ))}
                     </tbody>
                   </table>
+                </div>
+              </div>
+
+              {/* Turma (editável) */}
+              <div className="border-t border-border pt-4">
+                <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">Turma</h3>
+                <div className="flex items-center gap-3">
+                  <Select value={turmaEdit} onValueChange={setTurmaEdit}>
+                    <SelectTrigger className="max-w-xs">
+                      <SelectValue placeholder="Selecione uma turma" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">— Sem turma —</SelectItem>
+                      {filteredTurmas.map(t => (
+                        <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={saveTurmaId} disabled={savingTurma}>
+                    {savingTurma ? 'Salvando...' : 'Salvar'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Parcelas pagas (editável) */}
+              <div className="border-t border-border pt-4">
+                <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">Parcelas Pagas</h3>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min="0"
+                    max={totalParcelas(alunoParcelas.forma_pagamento)}
+                    value={mensalidadesEdit}
+                    onChange={e => setMensalidadesEdit(e.target.value)}
+                    className="w-24"
+                  />
+                  <span className="text-sm text-muted-foreground">de {totalParcelas(alunoParcelas.forma_pagamento)}</span>
+                  <Button size="sm" onClick={saveMensalidadesPagas} disabled={savingMensalidades}>
+                    {savingMensalidades ? 'Salvando...' : 'Salvar'}
+                  </Button>
                 </div>
               </div>
 
