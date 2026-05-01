@@ -164,6 +164,8 @@ export function Financeiro() {
   const [savingTurma, setSavingTurma] = useState(false);
   const [mensalidadesEdit, setMensalidadesEdit] = useState('0');
   const [savingMensalidades, setSavingMensalidades] = useState(false);
+  const [diaVencEdit, setDiaVencEdit] = useState<'10' | '20' | ''>('');
+  const [savingDiaVenc, setSavingDiaVenc] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -436,6 +438,7 @@ export function Financeiro() {
     setFpEdit((aluno.forma_pagamento as any) || 'mensalidade');
     setTurmaEdit(aluno.turma_id || '__none__');
     setMensalidadesEdit(String(aluno.mensalidades_pagas ?? 0));
+    setDiaVencEdit(aluno.dia_vencimento === 10 ? '10' : aluno.dia_vencimento === 20 ? '20' : '__nenhum__');
     setShowParcelasDialog(true);
   };
 
@@ -451,6 +454,20 @@ export function Financeiro() {
     setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, forma_pagamento: fpEdit, valor_mensalidade: valor } : a));
     setAlunoParcelas(prev => prev ? { ...prev, forma_pagamento: fpEdit } : prev);
     toast({ title: 'Salvo!', description: 'Forma de pagamento atualizada.' });
+  };
+
+  const saveDiaVencimento = async () => {
+    if (!alunoParcelas) return;
+    const val = (diaVencEdit && diaVencEdit !== '__nenhum__') ? parseInt(diaVencEdit) : null;
+    setSavingDiaVenc(true);
+    const { error } = await supabase.from('alunos')
+      .update({ dia_vencimento: val })
+      .eq('id', alunoParcelas.id);
+    setSavingDiaVenc(false);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao salvar dia de vencimento' }); return; }
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, dia_vencimento: val as any } : a));
+    setAlunoParcelas(prev => prev ? { ...prev, dia_vencimento: val as any } : prev);
+    toast({ title: 'Salvo!', description: `Vencimento definido para dia ${val ?? '—'}.` });
   };
 
   const saveTurmaId = async () => {
@@ -1171,6 +1188,29 @@ export function Financeiro() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* Dia de Vencimento (editável) */}
+              <div className="border-t border-border pt-4">
+                <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">Dia de Vencimento</h3>
+                <div className="flex items-center gap-3">
+                  <Select value={diaVencEdit} onValueChange={(v) => setDiaVencEdit(v as any)}>
+                    <SelectTrigger className="w-48">
+                      <SelectValue placeholder="Selecione o dia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__nenhum__">— Sem vencimento —</SelectItem>
+                      <SelectItem value="10">Dia 10</SelectItem>
+                      <SelectItem value="20">Dia 20</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" onClick={saveDiaVencimento} disabled={savingDiaVenc}>
+                    {savingDiaVenc ? 'Salvando...' : 'Salvar'}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Define em qual grupo o aluno aparece na aba Alunos
+                </p>
               </div>
 
               {/* Turma (editável) */}
