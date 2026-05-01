@@ -41,7 +41,6 @@ interface Turma {
   dia_vencimento: number;
   valor_mensalidade: number;
   total_mensalidades: number;
-  status: string;
   created_at: string;
 }
 
@@ -176,7 +175,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
         supabase.from('turmas')
-          .select('id, nome, produto, data_inicio, data_fim, dia_vencimento, valor_mensalidade, total_mensalidades, status, created_at')
+          .select('id, nome, produto, data_inicio, data_fim, dia_vencimento, valor_mensalidade, total_mensalidades, created_at')
           .order('created_at', { ascending: false }).limit(200),
         supabase.from('alunos')
           .select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, forma_pagamento, status, mensalidades_pagas, data_inicio, origem_lead, valor_mensalidade, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, observacoes, created_at')
@@ -650,7 +649,7 @@ export function Financeiro() {
               <th className="text-left py-3 px-4 font-medium">Fim</th>
               <th className="text-left py-3 px-4 font-medium">Alunos</th>
               <th className="text-left py-3 px-4 font-medium">Mensalidade</th>
-              <th className="text-left py-3 px-4 font-medium">Status</th>
+              <th className="text-left py-3 px-4 font-medium">Vencimento</th>
             </tr>
           </thead>
           <tbody>
@@ -670,11 +669,7 @@ export function Financeiro() {
                   {alunos.filter(a => a.turma_id === turma.id).length}
                 </td>
                 <td className="py-3 px-4">{formatCurrency(turma.valor_mensalidade || 0)}</td>
-                <td className="py-3 px-4">
-                  <Badge className={turma.status === 'ativo' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}>
-                    {turma.status}
-                  </Badge>
-                </td>
+                <td className="py-3 px-4">Dia {turma.dia_vencimento || 10}</td>
               </tr>
             ))}
           </tbody>
