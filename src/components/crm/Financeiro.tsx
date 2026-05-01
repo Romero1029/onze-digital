@@ -234,33 +234,32 @@ export function Financeiro() {
     filteredAlunos.filter(a => !!a.contrato_assinado), [filteredAlunos]);
 
   // Cálculos para resumo financeiro
-  const currentMonth = new Date();
+  const valorTotalContrato = (a: Aluno) => {
+    if (a.forma_pagamento === 'avista') return 997;
+    if (a.forma_pagamento === 'parcelado') return 109.49 * 12;
+    return 110 * 14;
+  };
 
-  const receitaMesAtual = useMemo(() => {
-    return filteredPagamentos
-      .filter(p => p.status === 'pago' && p.data_pagamento &&
-        isSameMonth(parseISO(p.data_pagamento), currentMonth))
-      .reduce((sum, p) => sum + p.valor, 0);
-  }, [filteredPagamentos]);
+  // Receita recebida = parcelas já pagas × valor de cada aluno
+  const receitaRecebida = useMemo(() => {
+    return filteredAlunos
+      .filter(a => a.status !== 'cancelado')
+      .reduce((sum, a) => sum + (a.mensalidades_pagas || 0) * (a.valor_mensalidade || 110), 0);
+  }, [filteredAlunos]);
 
-  const previstoMesAtual = useMemo(() => {
-    return filteredPagamentos
-      .filter(p => isSameMonth(parseISO(p.data_vencimento), currentMonth))
-      .reduce((sum, p) => sum + p.valor, 0);
-  }, [filteredPagamentos]);
+  // Total contratado = valor total de todos os contratos ativos
+  const totalContratado = useMemo(() => {
+    return filteredAlunos
+      .filter(a => a.status !== 'cancelado')
+      .reduce((sum, a) => sum + valorTotalContrato(a), 0);
+  }, [filteredAlunos]);
+
+  // Em aberto = ainda falta receber
+  const valorEmAberto = useMemo(() => totalContratado - receitaRecebida, [totalContratado, receitaRecebida]);
 
   const alunosInadimplentes = useMemo(() => {
     return filteredAlunos.filter(a => a.status === 'inadimplente');
   }, [filteredAlunos]);
-
-  const valorEmAberto = useMemo(() => {
-    return alunosInadimplentes.reduce((sum, aluno) => {
-      const pagamentosPendentes = filteredPagamentos.filter(p =>
-        p.aluno_id === aluno.id && p.status !== 'pago'
-      );
-      return sum + pagamentosPendentes.reduce((pSum, p) => pSum + p.valor, 0);
-    }, 0);
-  }, [alunosInadimplentes, filteredPagamentos]);
 
   const totalAlunosAtivos = useMemo(() =>
     filteredAlunos.filter(a => a.status === 'ativo').length, [filteredAlunos]);
@@ -874,8 +873,9 @@ export function Financeiro() {
           <div className="flex items-center gap-3">
             <div className="p-2 bg-green-100 rounded-lg"><DollarSign className="h-5 w-5 text-green-600" /></div>
             <div>
-              <p className="text-sm text-muted-foreground">Receita do Mês</p>
-              <p className="text-2xl font-bold text-green-600">{formatCurrency(receitaMesAtual)}</p>
+              <p className="text-sm text-muted-foreground">Receita Recebida</p>
+              <p className="text-2xl font-bold text-green-600">{formatCurrency(receitaRecebida)}</p>
+              <p className="text-xs text-muted-foreground">parcelas confirmadas</p>
             </div>
           </div>
         </Card>
@@ -883,18 +883,19 @@ export function Financeiro() {
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-100 rounded-lg"><Target className="h-5 w-5 text-blue-600" /></div>
             <div>
-              <p className="text-sm text-muted-foreground">Previsto do Mês</p>
-              <p className="text-2xl font-bold text-blue-600">{formatCurrency(previstoMesAtual)}</p>
+              <p className="text-sm text-muted-foreground">Total Contratado</p>
+              <p className="text-2xl font-bold text-blue-600">{formatCurrency(totalContratado)}</p>
+              <p className="text-xs text-muted-foreground">valor total dos contratos</p>
             </div>
           </div>
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-red-100 rounded-lg"><AlertCircle className="h-5 w-5 text-red-600" /></div>
+            <div className="p-2 bg-amber-100 rounded-lg"><TrendingUp className="h-5 w-5 text-amber-600" /></div>
             <div>
-              <p className="text-sm text-muted-foreground">Inadimplentes</p>
-              <p className="text-2xl font-bold text-red-600">{alunosInadimplentes.length}</p>
-              <p className="text-xs text-muted-foreground">{formatCurrency(valorEmAberto)} em aberto</p>
+              <p className="text-sm text-muted-foreground">A Receber</p>
+              <p className="text-2xl font-bold text-amber-600">{formatCurrency(valorEmAberto)}</p>
+              <p className="text-xs text-muted-foreground">ainda não recebido</p>
             </div>
           </div>
         </Card>
@@ -904,6 +905,7 @@ export function Financeiro() {
             <div>
               <p className="text-sm text-muted-foreground">Total Alunos Ativos</p>
               <p className="text-2xl font-bold text-purple-600">{totalAlunosAtivos}</p>
+              <p className="text-xs text-muted-foreground">{alunosInadimplentes.length > 0 ? `${alunosInadimplentes.length} inadimplente(s)` : 'todos em dia'}</p>
             </div>
           </div>
         </Card>
