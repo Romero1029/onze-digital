@@ -76,6 +76,7 @@ interface Aluno {
   contrato_assinado_em?: string;
   autentique_documento_id?: string;
   autentique_link_assinatura?: string;
+  observacoes?: string;
 }
 
 interface Pagamento {
@@ -151,8 +152,13 @@ export function Financeiro() {
     turma_id: '',
     data_inicio: '',
     dia_vencimento: '10',
-    origem: 'direto' as 'direto' | 'lancamento' | 'npa'
+    origem: 'direto' as 'direto' | 'lancamento' | 'npa',
+    forma_pagamento: 'mensalidade' as 'mensalidade' | 'parcelado' | 'avista',
   });
+
+  // Observações do aluno (edição inline no modal)
+  const [obsValue, setObsValue] = useState('');
+  const [savingObs, setSavingObs] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -171,7 +177,7 @@ export function Financeiro() {
           .select('id, nome, produto, data_inicio, data_fim, dia_vencimento, valor_mensalidade, total_mensalidades, status, created_at')
           .order('created_at', { ascending: false }).limit(200),
         supabase.from('alunos')
-          .select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, forma_pagamento, status, mensalidades_pagas, data_inicio, origem_lead, valor_mensalidade, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, created_at')
+          .select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, forma_pagamento, status, mensalidades_pagas, data_inicio, origem_lead, valor_mensalidade, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, observacoes, created_at')
           .order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos')
           .select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at')
@@ -249,10 +255,35 @@ export function Financeiro() {
     }, 0);
   }, [alunosInadimplentes, filteredPagamentos]);
 
-  const projecao14Meses = useMemo(() => {
-    const alunosAtivos = filteredAlunos.filter(a => a.status === 'ativo').length;
-    return alunosAtivos * 109.90 * 14;
-  }, [filteredAlunos]);
+  const totalAlunosAtivos = useMemo(() =>
+    filteredAlunos.filter(a => a.status === 'ativo').length, [filteredAlunos]);
+
+  // Valor esperado por aluno baseado na forma de pagamento
+  const valorAluno = (fp?: string) => {
+    if (fp === 'avista') return 997;
+    if (fp === 'parcelado') return 109.49 * 12;
+    return 110 * 14; // mensalidade padrão
+  };
+
+  // Parcelas a criar baseado na forma de pagamento
+  const buildParcelas = (
+    alunoId: string, turmaId: string, dataInicio: string, diavenc: number, fp: string
+  ) => {
+    const base = new Date(dataInicio || new Date().toISOString());
+    if (fp === 'avista') {
+      const venc = new Date(base);
+      venc.setDate(diavenc);
+      return [{ aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor: 997, mes_referencia: format(venc, 'yyyy-MM'), data_vencimento: venc.toISOString().split('T')[0], numero_parcela: 1, status: 'pendente' }];
+    }
+    const qtd = fp === 'parcelado' ? 12 : 14;
+    const valor = fp === 'parcelado' ? 109.49 : 110;
+    return Array.from({ length: qtd }, (_, i) => {
+      const venc = new Date(base);
+      venc.setMonth(venc.getMonth() + i);
+      venc.setDate(diavenc);
+      return { aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor, mes_referencia: format(venc, 'yyyy-MM'), data_vencimento: venc.toISOString().split('T')[0], numero_parcela: i + 1, status: 'pendente' };
+    });
+  };
 
   // Formatação
   const formatCurrency = (value: number) =>
@@ -294,26 +325,53 @@ export function Financeiro() {
   const createAluno = async () => {
     if (!newAlunoForm.nome.trim() || !newAlunoForm.turma_id) return;
     try {
-      const { error: alunoError } = await supabase.from('alunos').insert({
+      const fp = newAlunoForm.forma_pagamento;
+      const diaVenc = parseInt(newAlunoForm.dia_vencimento);
+      const { data: alunoData, error: alunoError } = await supabase.from('alunos').insert({
         turma_id: newAlunoForm.turma_id,
         produto: activeTab,
         nome: newAlunoForm.nome,
         whatsapp: newAlunoForm.whatsapp,
         email: newAlunoForm.email || null,
-        dia_vencimento: parseInt(newAlunoForm.dia_vencimento),
+        dia_vencimento: diaVenc,
         status: 'ativo',
         mensalidades_pagas: 0,
-        data_inicio: newAlunoForm.data_inicio,
-        origem_lead: newAlunoForm.origem
+        data_inicio: newAlunoForm.data_inicio || new Date().toISOString().split('T')[0],
+        origem_lead: newAlunoForm.origem,
+        forma_pagamento: fp,
+        valor_mensalidade: fp === 'avista' ? 997 : fp === 'parcelado' ? 109.49 : 110,
       }).select().single();
       if (alunoError) throw alunoError;
-      toast({ title: 'Aluno adicionado!', description: 'Aluno adicionado com sucesso.' });
+
+      // Criar parcelas conforme forma de pagamento
+      const parcelas = buildParcelas(
+        alunoData.id, newAlunoForm.turma_id,
+        newAlunoForm.data_inicio || new Date().toISOString().split('T')[0],
+        diaVenc, fp
+      );
+      if (parcelas.length > 0) {
+        await supabase.from('pagamentos').insert(parcelas);
+      }
+
+      toast({ title: 'Aluno adicionado!', description: 'Aluno e parcelas criados com sucesso.' });
       setShowAlunoDialog(false);
-      setNewAlunoForm({ nome: '', whatsapp: '', email: '', turma_id: '', data_inicio: '', dia_vencimento: '10', origem: 'direto' });
+      setNewAlunoForm({ nome: '', whatsapp: '', email: '', turma_id: '', data_inicio: '', dia_vencimento: '10', origem: 'direto', forma_pagamento: 'mensalidade' });
       loadData();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Erro', description: error.message || 'Erro ao adicionar aluno' });
     }
+  };
+
+  const saveObservacoes = async () => {
+    if (!alunoParcelas) return;
+    setSavingObs(true);
+    const { error } = await supabase.from('alunos')
+      .update({ observacoes: obsValue })
+      .eq('id', alunoParcelas.id);
+    setSavingObs(false);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao salvar observação' }); return; }
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, observacoes: obsValue } : a));
+    toast({ title: 'Salvo!', description: 'Observação salva com sucesso.' });
   };
 
   const deleteAluno = async () => {
@@ -369,6 +427,7 @@ export function Financeiro() {
 
   const openParcelasModal = (aluno: Aluno) => {
     setAlunoParcelas(aluno);
+    setObsValue(aluno.observacoes || '');
     setShowParcelasDialog(true);
   };
 
@@ -589,6 +648,81 @@ export function Financeiro() {
     </div>
   );
 
+  // ── Tabela de Alunos reutilizável ───────────────────────────────────────────
+  const fpLabel = (fp?: string) => {
+    if (fp === 'avista') return { label: 'À vista', cls: 'bg-green-100 text-green-700' };
+    if (fp === 'parcelado') return { label: '12x cartão', cls: 'bg-blue-100 text-blue-700' };
+    return { label: 'Mensalidade', cls: 'bg-gray-100 text-gray-700' };
+  };
+
+  const totalParcelas = (fp?: string) => fp === 'avista' ? 1 : fp === 'parcelado' ? 12 : 14;
+
+  const AlunoTable = ({ list }: { list: Aluno[] }) => (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left py-2 px-4 font-medium">Nome</th>
+            <th className="text-left py-2 px-4 font-medium">WhatsApp</th>
+            <th className="text-left py-2 px-4 font-medium">Turma</th>
+            <th className="text-left py-2 px-4 font-medium">Pagamento</th>
+            <th className="text-left py-2 px-4 font-medium">Parcelas</th>
+            <th className="text-left py-2 px-4 font-medium">Status</th>
+            <th className="text-left py-2 px-4 font-medium">Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.map(aluno => {
+            const fp = fpLabel(aluno.forma_pagamento);
+            const total = totalParcelas(aluno.forma_pagamento);
+            const turmaNome = turmas.find(t => t.id === aluno.turma_id)?.nome || '—';
+            return (
+              <tr key={aluno.id} className="border-b border-border/50 hover:bg-muted/50">
+                <td className="py-3 px-4">
+                  <div>
+                    <p className="font-medium">{aluno.nome}</p>
+                    {aluno.observacoes && (
+                      <p className="text-xs text-amber-600 truncate max-w-[180px]" title={aluno.observacoes}>
+                        📝 {aluno.observacoes}
+                      </p>
+                    )}
+                  </div>
+                </td>
+                <td className="py-3 px-4">
+                  <div className="flex items-center gap-2">
+                    <Phone className="h-4 w-4 text-muted-foreground" />
+                    {aluno.whatsapp}
+                  </div>
+                </td>
+                <td className="py-3 px-4 text-sm text-muted-foreground">{turmaNome}</td>
+                <td className="py-3 px-4">
+                  <Badge className={`${fp.cls} text-xs`}>{fp.label}</Badge>
+                </td>
+                <td className="py-3 px-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">{aluno.mensalidades_pagas}/{total}</span>
+                    <Progress value={(aluno.mensalidades_pagas / total) * 100} className="w-16 h-2" />
+                  </div>
+                </td>
+                <td className="py-3 px-4">{getStatusBadge(aluno.status)}</td>
+                <td className="py-3 px-4">
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => openParcelasModal(aluno)} title="Ver detalhes">
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => confirmDelete(aluno)} className="text-destructive hover:text-destructive" title="Excluir">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
   // ── Alunos View (existing content) ─────────────────────────────────────────
   const AlunosView = () => (
     <div className="space-y-6">
@@ -604,51 +738,7 @@ export function Financeiro() {
             <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 10</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2 px-4 font-medium">Nome</th>
-                  <th className="text-left py-2 px-4 font-medium">WhatsApp</th>
-                  <th className="text-left py-2 px-4 font-medium">Dia Venc.</th>
-                  <th className="text-left py-2 px-4 font-medium">Mensalidades</th>
-                  <th className="text-left py-2 px-4 font-medium">Status</th>
-                  <th className="text-left py-2 px-4 font-medium">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAlunos.filter(a => a.dia_vencimento === 10).map(aluno => (
-                  <tr key={aluno.id} className="border-b border-border/50 hover:bg-muted/50">
-                    <td className="py-3 px-4 font-medium">{aluno.nome}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <Phone className="h-4 w-4 text-muted-foreground" />
-                        {aluno.whatsapp}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">{aluno.dia_vencimento}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <span>{aluno.mensalidades_pagas}/14</span>
-                        <Progress value={(aluno.mensalidades_pagas / 14) * 100} className="w-16 h-2" />
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">{getStatusBadge(aluno.status)}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => openParcelasModal(aluno)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => confirmDelete(aluno)} className="text-destructive hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <AlunoTable list={filteredAlunos.filter(a => a.dia_vencimento === 10)} />
         )}
       </Card>
 
@@ -664,51 +754,7 @@ export function Financeiro() {
             <p className="text-muted-foreground">Nenhum aluno com vencimento no dia 20</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2 px-4 font-medium">Nome</th>
-                  <th className="text-left py-2 px-4 font-medium">WhatsApp</th>
-                  <th className="text-left py-2 px-4 font-medium">Dia Venc.</th>
-                  <th className="text-left py-2 px-4 font-medium">Mensalidades</th>
-                  <th className="text-left py-2 px-4 font-medium">Status</th>
-                  <th className="text-left py-2 px-4 font-medium">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAlunos.filter(a => a.dia_vencimento === 20).map(aluno => (
-                  <tr key={aluno.id} className="border-b border-border/50 hover:bg-muted/50">
-                    <td className="py-3 px-4 font-medium">{aluno.nome}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <Phone className="h-4 w-4 text-muted-foreground" />
-                        {aluno.whatsapp}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">{aluno.dia_vencimento}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <span>{aluno.mensalidades_pagas}/14</span>
-                        <Progress value={(aluno.mensalidades_pagas / 14) * 100} className="w-16 h-2" />
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">{getStatusBadge(aluno.status)}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => openParcelasModal(aluno)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => confirmDelete(aluno)} className="text-destructive hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <AlunoTable list={filteredAlunos.filter(a => a.dia_vencimento === 20)} />
         )}
       </Card>
     </div>
@@ -760,10 +806,10 @@ export function Financeiro() {
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-100 rounded-lg"><TrendingUp className="h-5 w-5 text-purple-600" /></div>
+            <div className="p-2 bg-purple-100 rounded-lg"><Users className="h-5 w-5 text-purple-600" /></div>
             <div>
-              <p className="text-sm text-muted-foreground">Projeção 14 meses</p>
-              <p className="text-2xl font-bold text-purple-600">{formatCurrency(projecao14Meses)}</p>
+              <p className="text-sm text-muted-foreground">Total Alunos Ativos</p>
+              <p className="text-2xl font-bold text-purple-600">{totalAlunosAtivos}</p>
             </div>
           </div>
         </Card>
@@ -961,6 +1007,17 @@ export function Financeiro() {
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <label className="text-sm font-medium">Forma de Pagamento</label>
+              <Select value={newAlunoForm.forma_pagamento} onValueChange={(value) => setNewAlunoForm({ ...newAlunoForm, forma_pagamento: value as any })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mensalidade">Mensalidade — 14x R$ 110,00</SelectItem>
+                  <SelectItem value="parcelado">Cartão — 12x R$ 109,49</SelectItem>
+                  <SelectItem value="avista">À vista — R$ 997,00</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAlunoDialog(false)}>Cancelar</Button>
@@ -1090,6 +1147,21 @@ export function Financeiro() {
               </div>
             </div>
           )}
+
+          {/* Observações */}
+          <div className="border-t border-border pt-4">
+            <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">Observações</h3>
+            <textarea
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+              rows={3}
+              placeholder="Ex: ficou de pagar dia 15, combinar desconto, aguardando retorno..."
+              value={obsValue}
+              onChange={e => setObsValue(e.target.value)}
+            />
+            <Button size="sm" className="mt-2" onClick={saveObservacoes} disabled={savingObs}>
+              {savingObs ? 'Salvando...' : 'Salvar Observação'}
+            </Button>
+          </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowParcelasDialog(false)}>Fechar</Button>
