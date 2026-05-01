@@ -434,7 +434,7 @@ export function Financeiro() {
     setAlunoParcelas(aluno);
     setObsValue(aluno.observacoes || '');
     setFpEdit((aluno.forma_pagamento as any) || 'mensalidade');
-    setTurmaEdit(aluno.turma_id || '');
+    setTurmaEdit(aluno.turma_id || '__none__');
     setMensalidadesEdit(String(aluno.mensalidades_pagas ?? 0));
     setShowParcelasDialog(true);
   };
@@ -456,13 +456,14 @@ export function Financeiro() {
   const saveTurmaId = async () => {
     if (!alunoParcelas) return;
     setSavingTurma(true);
+    const novaT = turmaEdit === '__none__' ? null : turmaEdit;
     const { error } = await supabase.from('alunos')
-      .update({ turma_id: turmaEdit || null })
+      .update({ turma_id: novaT })
       .eq('id', alunoParcelas.id);
     setSavingTurma(false);
     if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao salvar turma' }); return; }
-    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, turma_id: turmaEdit } : a));
-    setAlunoParcelas(prev => prev ? { ...prev, turma_id: turmaEdit } : prev);
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, turma_id: novaT || '' } : a));
+    setAlunoParcelas(prev => prev ? { ...prev, turma_id: novaT || '' } : prev);
     toast({ title: 'Salvo!', description: 'Turma atualizada.' });
   };
 
@@ -1141,8 +1142,8 @@ export function Financeiro() {
                             pagamento.status === 'pago' ? 'bg-green-50' : ''
                           }`}>
                             <td className="py-3 px-4">{pagamento.numero_parcela}</td>
-                            <td className="py-3 px-4">{pagamento.mes_referencia}</td>
-                            <td className="py-3 px-4">{formatDate(pagamento.data_vencimento)}</td>
+                            <td className="py-3 px-4">{safeDate(pagamento.mes_referencia)}</td>
+                            <td className="py-3 px-4">{safeDate(pagamento.data_vencimento)}</td>
                             <td className="py-3 px-4 font-medium">{formatCurrency(pagamento.valor)}</td>
                             <td className="py-3 px-4">
                               <Badge className={
@@ -1181,7 +1182,7 @@ export function Financeiro() {
                       <SelectValue placeholder="Selecione uma turma" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">— Sem turma —</SelectItem>
+                      <SelectItem value="__none__">— Sem turma —</SelectItem>
                       {filteredTurmas.map(t => (
                         <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>
                       ))}
