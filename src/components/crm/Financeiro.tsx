@@ -1195,7 +1195,7 @@ export function Financeiro() {
                       <SelectValue placeholder="Selecione o dia" />
                     </SelectTrigger>
                     <SelectContent>
-                      {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28].map(d => (
+                      {Array.from({length: 31}, (_, i) => i + 1).map(d => (
                         <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>
                       ))}
                     </SelectContent>
