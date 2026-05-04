@@ -273,21 +273,42 @@ export function Financeiro() {
 
   // Parcelas a criar baseado na forma de pagamento
   const buildParcelas = (
-    alunoId: string, turmaId: string, dataInicio: string, diavenc: number, fp: string
+    alunoId: string, turmaId: string, dataInicio: string, diavenc: number, fp: string,
+    japagas = 0
   ) => {
-    const base = new Date(dataInicio || new Date().toISOString());
+    const startStr = dataInicio || new Date().toISOString().split('T')[0];
+    const [sy, sm] = startStr.split('-').map(Number);
+
+    // Pure arithmetic — no Date() to avoid UTC/timezone shifts
+    const toStr = (y: number, m: number, d: number) =>
+      `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+    const addMonths = (baseY: number, baseM: number, add: number) => {
+      let m = baseM + add;
+      let y = baseY;
+      while (m > 12) { m -= 12; y += 1; }
+      return { y, m };
+    };
+
     if (fp === 'avista') {
-      const venc = new Date(base);
-      venc.setDate(diavenc);
-      return [{ aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor: 997, mes_referencia: venc.toISOString().split('T')[0], data_vencimento: venc.toISOString().split('T')[0], numero_parcela: 1, status: 'pendente' }];
+      const ds = toStr(sy, sm, diavenc);
+      return [{ aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor: 997,
+        mes_referencia: ds, data_vencimento: ds, numero_parcela: 1,
+        status: japagas >= 1 ? 'pago' : 'pendente',
+        data_pagamento: japagas >= 1 ? new Date().toISOString() : null }];
     }
+
     const qtd = fp === 'parcelado' ? 12 : 15;
     const valor = fp === 'parcelado' ? 109.49 : 110;
+
     return Array.from({ length: qtd }, (_, i) => {
-      const venc = new Date(base);
-      venc.setMonth(venc.getMonth() + i);
-      venc.setDate(diavenc);
-      return { aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor, mes_referencia: venc.toISOString().split('T')[0], data_vencimento: venc.toISOString().split('T')[0], numero_parcela: i + 1, status: 'pendente' };
+      const { y, m } = addMonths(sy, sm, i);
+      const ds = toStr(y, m, diavenc);
+      const pago = i < japagas;
+      return { aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor,
+        mes_referencia: ds, data_vencimento: ds, numero_parcela: i + 1,
+        status: pago ? 'pago' : 'pendente',
+        data_pagamento: pago ? new Date().toISOString() : null };
     });
   };
 
@@ -484,7 +505,7 @@ export function Financeiro() {
     const diaVenc = alunoParcelas.dia_vencimento || 10;
     const dataInicio = alunoParcelas.data_inicio || new Date().toISOString().split('T')[0];
     const turmaId = alunoParcelas.turma_id || '';
-    const parcelas = buildParcelas(alunoParcelas.id, turmaId, dataInicio, diaVenc, fp);
+    const parcelas = buildParcelas(alunoParcelas.id, turmaId, dataInicio, diaVenc, fp, alunoParcelas.mensalidades_pagas || 0);
     const { error } = await supabase.from('pagamentos').insert(parcelas);
     if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao gerar parcelas: ' + error.message }); return; }
     toast({ title: 'Parcelas geradas!', description: `${parcelas.length} parcelas criadas com sucesso.` });
@@ -1268,9 +1289,21 @@ export function Financeiro() {
                                 </td>
                                 <td className="py-2 px-3">
                                   {p.status === 'pago' ? (
-                                    <button onClick={() => estornarPagamento(p.id, alunoParcelas.id)} className="text-xs text-orange-600 hover:underline">Estornar</button>
+                                    <button
+                                      onClick={() => estornarPagamento(p.id, alunoParcelas.id)}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-100 text-green-700 hover:bg-orange-100 hover:text-orange-700 transition-colors"
+                                      title="Clique para desfazer"
+                                    >
+                                      ✓ Pago
+                                    </button>
                                   ) : (
-                                    <button onClick={() => marcarComoPago(p.id, alunoParcelas.id)} className="text-xs text-green-600 hover:underline">Pago</button>
+                                    <button
+                                      onClick={() => marcarComoPago(p.id, alunoParcelas.id)}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700 transition-colors"
+                                      title="Clique para marcar como pago"
+                                    >
+                                      Marcar pago
+                                    </button>
                                   )}
                                 </td>
                               </tr>
