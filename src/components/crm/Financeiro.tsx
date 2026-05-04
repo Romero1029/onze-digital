@@ -469,6 +469,19 @@ export function Financeiro() {
     toast({ title: 'Salvo!', description: `Vencimento definido para dia ${val ?? '—'}.` });
   };
 
+  const gerarParcelas = async () => {
+    if (!alunoParcelas) return;
+    const fp = alunoParcelas.forma_pagamento || 'mensalidade';
+    const diaVenc = alunoParcelas.dia_vencimento || 10;
+    const dataInicio = alunoParcelas.data_inicio || new Date().toISOString().split('T')[0];
+    const turmaId = alunoParcelas.turma_id || '';
+    const parcelas = buildParcelas(alunoParcelas.id, turmaId, dataInicio, diaVenc, fp);
+    const { error } = await supabase.from('pagamentos').insert(parcelas);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao gerar parcelas: ' + error.message }); return; }
+    toast({ title: 'Parcelas geradas!', description: `${parcelas.length} parcelas criadas com sucesso.` });
+    loadData();
+  };
+
   const saveTurmaId = async () => {
     if (!alunoParcelas) return;
     setSavingTurma(true);
@@ -1155,7 +1168,14 @@ export function Financeiro() {
             <div className="space-y-6">
               {/* Parcelas */}
               <div>
-                <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">Parcelas</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Parcelas</h3>
+                  {filteredPagamentos.filter(p => p.aluno_id === alunoParcelas.id).length === 0 && (
+                    <Button size="sm" variant="outline" onClick={gerarParcelas} className="text-primary border-primary hover:bg-primary/10">
+                      + Gerar Parcelas
+                    </Button>
+                  )}
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
