@@ -166,6 +166,8 @@ export function Financeiro() {
   const [savingMensalidades, setSavingMensalidades] = useState(false);
   const [diaVencEdit, setDiaVencEdit] = useState<'10' | '20' | ''>('');
   const [savingDiaVenc, setSavingDiaVenc] = useState(false);
+  const [dataInicioEdit, setDataInicioEdit] = useState('');
+  const [savingDataInicio, setSavingDataInicio] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -459,6 +461,7 @@ export function Financeiro() {
     setTurmaEdit(aluno.turma_id || '__none__');
     setMensalidadesEdit(String(aluno.mensalidades_pagas ?? 0));
     setDiaVencEdit(aluno.dia_vencimento ? String(aluno.dia_vencimento) as any : '');
+    setDataInicioEdit(aluno.data_inicio || '');
     setShowParcelasDialog(true);
   };
 
@@ -488,6 +491,39 @@ export function Financeiro() {
     setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, dia_vencimento: val as any } : a));
     setAlunoParcelas(prev => prev ? { ...prev, dia_vencimento: val as any } : prev);
     toast({ title: 'Salvo!', description: `Vencimento definido para dia ${val ?? '—'}.` });
+  };
+
+  const atualizarDatasParcelasFrom = async () => {
+    if (!alunoParcelas || !dataInicioEdit) return;
+    setSavingDataInicio(true);
+
+    const parcs = pagamentos
+      .filter(p => p.aluno_id === alunoParcelas.id)
+      .sort((a, b) => a.numero_parcela - b.numero_parcela);
+
+    const [sy, sm] = dataInicioEdit.split('-').map(Number);
+    const dv = alunoParcelas.dia_vencimento || 10;
+
+    const toStr = (y: number, m: number, d: number) =>
+      `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+    const getDate = (i: number) => {
+      let m = sm + i; let y = sy;
+      while (m > 12) { m -= 12; y += 1; }
+      return toStr(y, m, dv);
+    };
+
+    await Promise.all(parcs.map((p, i) => {
+      const ds = getDate(i);
+      return supabase.from('pagamentos').update({ data_vencimento: ds, mes_referencia: ds }).eq('id', p.id);
+    }));
+
+    await supabase.from('alunos').update({ data_inicio: dataInicioEdit }).eq('id', alunoParcelas.id);
+    setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, data_inicio: dataInicioEdit } : a));
+    setAlunoParcelas(prev => prev ? { ...prev, data_inicio: dataInicioEdit } : prev);
+    setSavingDataInicio(false);
+    toast({ title: 'Datas atualizadas!', description: `${parcs.length} parcelas recalculadas a partir de ${safeDate(dataInicioEdit)}.` });
+    loadData();
   };
 
   const marcarInadimplente = async (alunoId: string, inadimplente: boolean) => {
@@ -1279,7 +1315,10 @@ export function Financeiro() {
                           <tbody>
                             {parcs.map(p => (
                               <tr key={p.id} className={`border-b border-border/50 ${p.status === 'pago' ? 'bg-green-50/50' : p.id === proxima?.id ? 'bg-amber-50/50' : ''}`}>
-                                <td className="py-2 px-3">{p.numero_parcela}</td>
+                                <td className="py-2 px-3">
+                                  {p.numero_parcela}
+                                  {p.numero_parcela === 1 && <span className="ml-1 text-xs text-purple-600 font-medium">(matrícula)</span>}
+                                </td>
                                 <td className="py-2 px-3">{safeDate(p.data_vencimento)}</td>
                                 <td className="py-2 px-3 font-medium">{formatCurrency(p.valor)}</td>
                                 <td className="py-2 px-3">
@@ -1315,6 +1354,25 @@ export function Financeiro() {
                   </div>
                 );
               })()}
+
+              {/* Primeira Mensalidade — recalcula todas as datas */}
+              <div className="border-t border-border pt-4">
+                <h3 className="font-semibold text-sm mb-1 text-muted-foreground uppercase tracking-wide">Data da 1ª Mensalidade (Matrícula)</h3>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Ao salvar, todas as parcelas serão recalculadas a partir desta data mantendo o dia {alunoParcelas?.dia_vencimento || '—'}.
+                </p>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="date"
+                    value={dataInicioEdit}
+                    onChange={e => setDataInicioEdit(e.target.value)}
+                    className="w-48"
+                  />
+                  <Button size="sm" onClick={atualizarDatasParcelasFrom} disabled={savingDataInicio || !dataInicioEdit}>
+                    {savingDataInicio ? 'Atualizando...' : 'Recalcular datas'}
+                  </Button>
+                </div>
+              </div>
 
               {/* Dia de Vencimento (editável) */}
               <div className="border-t border-border pt-4">
