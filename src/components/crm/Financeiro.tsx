@@ -279,7 +279,7 @@ export function Financeiro() {
     if (fp === 'avista') {
       const venc = new Date(base);
       venc.setDate(diavenc);
-      return [{ aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor: 997, mes_referencia: format(venc, 'yyyy-MM'), data_vencimento: venc.toISOString().split('T')[0], numero_parcela: 1, status: 'pendente' }];
+      return [{ aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor: 997, mes_referencia: venc.toISOString().split('T')[0], data_vencimento: venc.toISOString().split('T')[0], numero_parcela: 1, status: 'pendente' }];
     }
     const qtd = fp === 'parcelado' ? 12 : 15;
     const valor = fp === 'parcelado' ? 109.49 : 110;
@@ -287,7 +287,7 @@ export function Financeiro() {
       const venc = new Date(base);
       venc.setMonth(venc.getMonth() + i);
       venc.setDate(diavenc);
-      return { aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor, mes_referencia: format(venc, 'yyyy-MM'), data_vencimento: venc.toISOString().split('T')[0], numero_parcela: i + 1, status: 'pendente' };
+      return { aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor, mes_referencia: venc.toISOString().split('T')[0], data_vencimento: venc.toISOString().split('T')[0], numero_parcela: i + 1, status: 'pendente' };
     });
   };
 
@@ -467,6 +467,15 @@ export function Financeiro() {
     setAlunos(prev => prev.map(a => a.id === alunoParcelas.id ? { ...a, dia_vencimento: val as any } : a));
     setAlunoParcelas(prev => prev ? { ...prev, dia_vencimento: val as any } : prev);
     toast({ title: 'Salvo!', description: `Vencimento definido para dia ${val ?? '—'}.` });
+  };
+
+  const marcarInadimplente = async (alunoId: string, inadimplente: boolean) => {
+    const novoStatus = inadimplente ? 'inadimplente' : 'ativo';
+    const { error } = await supabase.from('alunos').update({ status: novoStatus }).eq('id', alunoId);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao atualizar status' }); return; }
+    setAlunos(prev => prev.map(a => a.id === alunoId ? { ...a, status: novoStatus as any } : a));
+    setAlunoParcelas(prev => prev ? { ...prev, status: novoStatus as any } : prev);
+    toast({ title: inadimplente ? 'Marcado como inadimplente' : 'Status normalizado', description: '' });
   };
 
   const gerarParcelas = async () => {
@@ -1167,67 +1176,112 @@ export function Financeiro() {
           {alunoParcelas && (
             <div className="space-y-6">
               {/* Parcelas */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Parcelas</h3>
-                  {filteredPagamentos.filter(p => p.aluno_id === alunoParcelas.id).length === 0 && (
-                    <Button size="sm" variant="outline" onClick={gerarParcelas} className="text-primary border-primary hover:bg-primary/10">
-                      + Gerar Parcelas
-                    </Button>
-                  )}
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="text-left py-2 px-4 font-medium">Nº</th>
-                        <th className="text-left py-2 px-4 font-medium">Mês Referência</th>
-                        <th className="text-left py-2 px-4 font-medium">Vencimento</th>
-                        <th className="text-left py-2 px-4 font-medium">Valor</th>
-                        <th className="text-left py-2 px-4 font-medium">Status</th>
-                        <th className="text-left py-2 px-4 font-medium">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPagamentos
-                        .filter(p => p.aluno_id === alunoParcelas.id)
-                        .sort((a, b) => a.numero_parcela - b.numero_parcela)
-                        .map(pagamento => (
-                          <tr key={pagamento.id} className={`border-b border-border/50 ${
-                            pagamento.status === 'atrasado' ? 'bg-red-50' :
-                            pagamento.status === 'pago' ? 'bg-green-50' : ''
-                          }`}>
-                            <td className="py-3 px-4">{pagamento.numero_parcela}</td>
-                            <td className="py-3 px-4">{safeDate(pagamento.mes_referencia)}</td>
-                            <td className="py-3 px-4">{safeDate(pagamento.data_vencimento)}</td>
-                            <td className="py-3 px-4 font-medium">{formatCurrency(pagamento.valor)}</td>
-                            <td className="py-3 px-4">
-                              <Badge className={
-                                pagamento.status === 'pago' ? 'bg-green-100 text-green-800' :
-                                pagamento.status === 'atrasado' ? 'bg-red-100 text-red-800' :
-                                'bg-yellow-100 text-yellow-800'
-                              }>
-                                {pagamento.status === 'pago' ? '✓ Pago' :
-                                 pagamento.status === 'atrasado' ? '⚠ Atrasado' : '⏳ Pendente'}
-                              </Badge>
-                            </td>
-                            <td className="py-3 px-4">
-                              {pagamento.status === 'pago' ? (
-                                <Button variant="outline" size="sm" onClick={() => estornarPagamento(pagamento.id, alunoParcelas.id)} className="text-orange-600 border-orange-200 hover:bg-orange-50">
-                                  Estornar
-                                </Button>
-                              ) : (
-                                <Button variant="outline" size="sm" onClick={() => marcarComoPago(pagamento.id, alunoParcelas.id)} className="text-green-600 border-green-200 hover:bg-green-50">
-                                  Marcar Pago
-                                </Button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              {(() => {
+                const parcs = filteredPagamentos
+                  .filter(p => p.aluno_id === alunoParcelas.id)
+                  .sort((a, b) => a.numero_parcela - b.numero_parcela);
+                const proxima = parcs.find(p => p.status !== 'pago');
+                const hoje = new Date();
+                hoje.setHours(0,0,0,0);
+                const atrasada = proxima && proxima.data_vencimento
+                  ? new Date(proxima.data_vencimento) < hoje
+                  : false;
+                const todasPagas = parcs.length > 0 && !proxima;
+
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                        Parcelas {parcs.length > 0 && `(${parcs.filter(p=>p.status==='pago').length}/${parcs.length} pagas)`}
+                      </h3>
+                      {parcs.length === 0 && (
+                        <Button size="sm" variant="outline" onClick={gerarParcelas} className="text-primary border-primary hover:bg-primary/10">
+                          + Gerar Parcelas
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Card da próxima mensalidade */}
+                    {todasPagas && (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 border border-green-200 mb-3">
+                        <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
+                        <p className="text-sm font-medium text-green-700">Todas as parcelas pagas!</p>
+                      </div>
+                    )}
+
+                    {proxima && (
+                      <div className={`p-3 rounded-lg border mb-3 ${atrasada ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-200'}`}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className={`text-xs font-semibold uppercase tracking-wide ${atrasada ? 'text-red-600' : 'text-amber-700'}`}>
+                              {atrasada ? '⚠ Parcela em atraso' : '⏳ Próxima parcela'}
+                            </p>
+                            <p className="font-bold text-sm mt-0.5">
+                              Parcela {proxima.numero_parcela} — {formatCurrency(proxima.valor)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Vence: {safeDate(proxima.data_vencimento)}
+                            </p>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Button size="sm" onClick={() => marcarComoPago(proxima.id, alunoParcelas.id)} className="bg-green-600 hover:bg-green-700 text-white text-xs">
+                              ✓ Marcar pago
+                            </Button>
+                            {atrasada && alunoParcelas.status !== 'inadimplente' && (
+                              <Button size="sm" variant="outline" onClick={() => marcarInadimplente(alunoParcelas.id, true)} className="text-red-600 border-red-300 text-xs">
+                                Marcar inadimplente
+                              </Button>
+                            )}
+                            {alunoParcelas.status === 'inadimplente' && (
+                              <Button size="sm" variant="outline" onClick={() => marcarInadimplente(alunoParcelas.id, false)} className="text-green-600 border-green-300 text-xs">
+                                Regularizar
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Histórico completo */}
+                    {parcs.length > 0 && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border">
+                              <th className="text-left py-2 px-3 font-medium">Nº</th>
+                              <th className="text-left py-2 px-3 font-medium">Vencimento</th>
+                              <th className="text-left py-2 px-3 font-medium">Valor</th>
+                              <th className="text-left py-2 px-3 font-medium">Status</th>
+                              <th className="text-left py-2 px-3 font-medium">Ação</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {parcs.map(p => (
+                              <tr key={p.id} className={`border-b border-border/50 ${p.status === 'pago' ? 'bg-green-50/50' : p.id === proxima?.id ? 'bg-amber-50/50' : ''}`}>
+                                <td className="py-2 px-3">{p.numero_parcela}</td>
+                                <td className="py-2 px-3">{safeDate(p.data_vencimento)}</td>
+                                <td className="py-2 px-3 font-medium">{formatCurrency(p.valor)}</td>
+                                <td className="py-2 px-3">
+                                  <Badge className={p.status === 'pago' ? 'bg-green-100 text-green-800' : p.id === proxima?.id && atrasada ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}>
+                                    {p.status === 'pago' ? '✓ Pago' : p.id === proxima?.id && atrasada ? '⚠ Atrasado' : '⏳ Pendente'}
+                                  </Badge>
+                                </td>
+                                <td className="py-2 px-3">
+                                  {p.status === 'pago' ? (
+                                    <button onClick={() => estornarPagamento(p.id, alunoParcelas.id)} className="text-xs text-orange-600 hover:underline">Estornar</button>
+                                  ) : (
+                                    <button onClick={() => marcarComoPago(p.id, alunoParcelas.id)} className="text-xs text-green-600 hover:underline">Pago</button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Dia de Vencimento (editável) */}
               <div className="border-t border-border pt-4">
