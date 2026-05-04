@@ -41,10 +41,13 @@ interface Aluno {
   dia_vencimento?: number;
   status: 'ativo' | 'inadimplente' | 'cancelado' | 'concluido';
   mensalidades_pagas?: number;
+  total_mensalidades?: number;
   data_inicio?: string;
+  data_fim?: string;
   origem_lead?: string;
   valor_mensalidade?: number;
   forma_pagamento?: string;
+  observacoes?: string;
   contrato_enviado?: boolean;
   contrato_enviado_em?: string;
   contrato_assinado?: boolean;
@@ -130,7 +133,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
         supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, created_at').order('created_at', { ascending: false }).limit(200),
-        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, dia_vencimento, status, mensalidades_pagas, data_inicio, origem_lead, valor_mensalidade, forma_pagamento, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, dia_vencimento, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, origem_lead, valor_mensalidade, forma_pagamento, observacoes, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, created_at').order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
       ]);
       if (turmasRes.data) setTurmas(turmasRes.data);
@@ -284,27 +287,32 @@ export function Financeiro() {
     const valor = turma?.valor_mensalidade || 109.90;
     const totalParcelas = formaPgto === 'boleto' ? 14 : formaPgto === 'cartao' ? 12 : 1;
     const start = dataInicio ? new Date(dataInicio + 'T12:00:00') : new Date();
+    const hoje = new Date().toISOString().split('T')[0];
     const rows = Array.from({ length: totalParcelas }, (_, i) => {
       const d = new Date(start.getFullYear(), start.getMonth() + i, diaVenc);
+      // mes_referencia is DATE type in DB — use first day of the month
+      const mesRef = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
       return {
         aluno_id: alunoId,
         turma_id: turmaId,
         produto: activeTab,
         valor,
-        mes_referencia: `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`,
+        mes_referencia: mesRef,
         data_vencimento: d.toISOString().split('T')[0],
         numero_parcela: i + 1,
         status: formaPgto === 'pix' ? 'pago' : 'pendente',
-        ...(formaPgto === 'pix' ? { data_pagamento: new Date().toISOString() } : {}),
+        ...(formaPgto === 'pix' ? { data_pagamento: hoje } : {}),
       };
     });
-    await supabase.from('pagamentos').insert(rows);
+    const { error } = await supabase.from('pagamentos').insert(rows);
+    if (error) console.error('Erro ao gerar pagamentos:', error.message);
   };
 
   const createAluno = async () => {
     if (!newAlunoForm.nome.trim() || !newAlunoForm.turma_id) return;
     try {
       const diaVenc = parseInt(newAlunoForm.dia_vencimento) || 10;
+      const totalMens = newAlunoForm.forma_pagamento === 'pix' ? 1 : newAlunoForm.forma_pagamento === 'cartao' ? 12 : 14;
       const { data: inserted, error } = await supabase.from('alunos').insert({
         turma_id: newAlunoForm.turma_id,
         produto: activeTab,
@@ -314,6 +322,7 @@ export function Financeiro() {
         dia_vencimento: diaVenc,
         status: 'ativo',
         mensalidades_pagas: newAlunoForm.forma_pagamento === 'pix' ? 1 : 0,
+        total_mensalidades: totalMens,
         data_inicio: newAlunoForm.data_inicio || null,
         origem_lead: newAlunoForm.origem,
         forma_pagamento: newAlunoForm.forma_pagamento || null,
@@ -346,6 +355,8 @@ export function Financeiro() {
       forma_pagamento: a.forma_pagamento || '',
       contrato_enviado: a.contrato_enviado ?? false,
       contrato_assinado: a.contrato_assinado ?? false,
+      total_mensalidades: a.total_mensalidades,
+      observacoes: a.observacoes || '',
     });
     setShowAlunoDetail(true);
   };
@@ -369,6 +380,8 @@ export function Financeiro() {
         forma_pagamento: editAlunoForm.forma_pagamento || null,
         contrato_enviado: editAlunoForm.contrato_enviado ?? false,
         contrato_assinado: editAlunoForm.contrato_assinado ?? false,
+        total_mensalidades: editAlunoForm.total_mensalidades ?? null,
+        observacoes: editAlunoForm.observacoes || null,
       };
       const { error } = await supabase.from('alunos').update(updateData).eq('id', alunoDetail.id);
       // Se valor personalizado definido, atualiza parcelas pendentes deste aluno
@@ -522,6 +535,7 @@ export function Financeiro() {
                           <tr className="border-b border-border text-muted-foreground">
                             <th className="text-left py-2 px-3 font-medium">Nome</th>
                             <th className="text-left py-2 px-3 font-medium">WhatsApp</th>
+                            <th className="text-left py-2 px-3 font-medium">Turma</th>
                             <th className="text-left py-2 px-3 font-medium">Pagamento</th>
                             <th className="text-left py-2 px-3 font-medium">Parcelas</th>
                             <th className="text-left py-2 px-3 font-medium">Status</th>
@@ -530,7 +544,7 @@ export function Financeiro() {
                         </thead>
                         <tbody>
                           {grupo.map(aluno => {
-                            const total = turma?.total_mensalidades || (aluno.forma_pagamento === 'cartao' ? 12 : aluno.forma_pagamento === 'pix' ? 1 : 14);
+                            const total = aluno.total_mensalidades || turma?.total_mensalidades || 14;
                             const pgBadge: Record<string, string> = { boleto: 'bg-orange-100 text-orange-700', cartao: 'bg-blue-100 text-blue-700', pix: 'bg-green-100 text-green-700' };
                             const pgLabel: Record<string, string> = { boleto: 'Mensalidade', cartao: 'Cartão', pix: 'À vista' };
                             return (
@@ -539,6 +553,7 @@ export function Financeiro() {
                                 <td className="py-2.5 px-3">
                                   {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">—</span>}
                                 </td>
+                                <td className="py-2.5 px-3 text-muted-foreground text-xs">{turma?.nome || '—'}</td>
                                 <td className="py-2.5 px-3">
                                   {aluno.forma_pagamento
                                     ? <Badge className={pgBadge[aluno.forma_pagamento] || 'bg-gray-100 text-gray-700'}>{pgLabel[aluno.forma_pagamento] || aluno.forma_pagamento}</Badge>
@@ -877,6 +892,11 @@ export function Financeiro() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div><label className="text-xs font-medium text-muted-foreground uppercase">Total Parcelas</label><Input type="number" value={editAlunoForm.total_mensalidades ?? ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, total_mensalidades: e.target.value ? parseInt(e.target.value) : undefined })} placeholder="Padrão da turma" className="mt-1" /></div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase">Observações</label>
+                <textarea value={editAlunoForm.observacoes || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, observacoes: e.target.value })} placeholder="Observações sobre o aluno..." className="mt-1 w-full min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" />
               </div>
 
               {/* Parcelas */}
