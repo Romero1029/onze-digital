@@ -141,7 +141,7 @@ export function Financeiro() {
     data_fim: '',
     dia_vencimento: '10',
     valor_mensalidade: '109.90',
-    total_mensalidades: '14'
+    total_mensalidades: '15'
   });
 
   const [newAlunoForm, setNewAlunoForm] = useState({
@@ -237,7 +237,7 @@ export function Financeiro() {
   const valorTotalContrato = (a: Aluno) => {
     if (a.forma_pagamento === 'avista') return 997;
     if (a.forma_pagamento === 'parcelado') return 109.49 * 12;
-    return 110 * 14;
+    return 110 * 15;
   };
 
   // Receita recebida = parcelas já pagas × valor de cada aluno
@@ -268,7 +268,7 @@ export function Financeiro() {
   const valorAluno = (fp?: string) => {
     if (fp === 'avista') return 997;
     if (fp === 'parcelado') return 109.49 * 12;
-    return 110 * 14; // mensalidade padrão
+    return 110 * 15; // mensalidade padrão
   };
 
   // Parcelas a criar baseado na forma de pagamento
@@ -281,7 +281,7 @@ export function Financeiro() {
       venc.setDate(diavenc);
       return [{ aluno_id: alunoId, turma_id: turmaId, produto: activeTab, valor: 997, mes_referencia: format(venc, 'yyyy-MM'), data_vencimento: venc.toISOString().split('T')[0], numero_parcela: 1, status: 'pendente' }];
     }
-    const qtd = fp === 'parcelado' ? 12 : 14;
+    const qtd = fp === 'parcelado' ? 12 : 15;
     const valor = fp === 'parcelado' ? 109.49 : 110;
     return Array.from({ length: qtd }, (_, i) => {
       const venc = new Date(base);
@@ -321,7 +321,7 @@ export function Financeiro() {
       if (error) throw error;
       toast({ title: 'Turma criada!', description: 'Turma criada com sucesso.' });
       setShowTurmaDialog(false);
-      setNewTurmaForm({ nome: '', produto: 'psicanalise', data_inicio: '', data_fim: '', dia_vencimento: '10', valor_mensalidade: '109.90', total_mensalidades: '14' });
+      setNewTurmaForm({ nome: '', produto: 'psicanalise', data_inicio: '', data_fim: '', dia_vencimento: '10', valor_mensalidade: '109.90', total_mensalidades: '15' });
       loadData();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Erro', description: error.message || 'Erro ao criar turma' });
@@ -735,7 +735,7 @@ export function Financeiro() {
     return { label: 'Mensalidade', cls: 'bg-gray-100 text-gray-700' };
   };
 
-  const totalParcelas = (fp?: string) => fp === 'avista' ? 1 : fp === 'parcelado' ? 12 : 14;
+  const totalParcelas = (fp?: string) => fp === 'avista' ? 1 : fp === 'parcelado' ? 12 : 15;
 
   const AlunoTable = ({ list }: { list: Aluno[] }) => (
     <div className="overflow-x-auto">
@@ -808,7 +808,15 @@ export function Financeiro() {
   const AlunosView = () => {
     const dias = [...new Set(filteredAlunos.map(a => a.dia_vencimento).filter(Boolean))]
       .sort((a, b) => (a as number) - (b as number)) as number[];
-    const semDia = filteredAlunos.filter(a => !a.dia_vencimento);
+
+    // Cartão/à vista não têm vencimento mensal — grupo próprio
+    const cartaoAvista = filteredAlunos.filter(
+      a => !a.dia_vencimento && (a.forma_pagamento === 'parcelado' || a.forma_pagamento === 'avista')
+    );
+    // Mensalidade sem dia definido ainda
+    const semDia = filteredAlunos.filter(
+      a => !a.dia_vencimento && a.forma_pagamento !== 'parcelado' && a.forma_pagamento !== 'avista'
+    );
 
     return (
       <div className="space-y-6">
@@ -826,6 +834,19 @@ export function Financeiro() {
             <AlunoTable list={filteredAlunos.filter(a => a.dia_vencimento === dia)} />
           </Card>
         ))}
+
+        {cartaoAvista.length > 0 && (
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <DollarSign className="h-5 w-5 text-muted-foreground" />
+                Cartão / À vista
+              </h3>
+              <Badge variant="secondary">{cartaoAvista.length} alunos</Badge>
+            </div>
+            <AlunoTable list={cartaoAvista} />
+          </Card>
+        )}
 
         {semDia.length > 0 && (
           <Card className="p-6">
@@ -1108,7 +1129,7 @@ export function Financeiro() {
               <Select value={newAlunoForm.forma_pagamento} onValueChange={(value) => setNewAlunoForm({ ...newAlunoForm, forma_pagamento: value as any })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="mensalidade">Mensalidade — 14x R$ 110,00</SelectItem>
+                  <SelectItem value="mensalidade">Mensalidade — 15x R$ 110,00</SelectItem>
                   <SelectItem value="parcelado">Cartão — 12x R$ 109,49</SelectItem>
                   <SelectItem value="avista">À vista — R$ 997,00</SelectItem>
                 </SelectContent>
@@ -1257,7 +1278,7 @@ export function Financeiro() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="mensalidade">Mensalidade — 14x R$ 110,00</SelectItem>
+                      <SelectItem value="mensalidade">Mensalidade — 15x R$ 110,00</SelectItem>
                       <SelectItem value="parcelado">Cartão — 12x R$ 109,49</SelectItem>
                       <SelectItem value="avista">À vista — R$ 997,00</SelectItem>
                     </SelectContent>
@@ -1270,7 +1291,7 @@ export function Financeiro() {
                   Atual: <strong>{fpLabel(alunoParcelas.forma_pagamento).label}</strong>
                   {alunoParcelas.forma_pagamento === 'avista' && ' — R$ 997,00 único'}
                   {alunoParcelas.forma_pagamento === 'parcelado' && ' — 12x R$ 109,49 no cartão'}
-                  {(!alunoParcelas.forma_pagamento || alunoParcelas.forma_pagamento === 'mensalidade') && ' — 14x R$ 110,00/mês'}
+                  {(!alunoParcelas.forma_pagamento || alunoParcelas.forma_pagamento === 'mensalidade') && ' — 15x R$ 110,00/mês'}
                 </p>
               </div>
 
