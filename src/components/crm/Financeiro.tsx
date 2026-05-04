@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { toast } from '@/components/ui/use-toast';
 import {
-  Plus, DollarSign, Users, AlertCircle, Eye, Trash2, Calendar,
+  Plus, DollarSign, Users, AlertCircle, Eye, Trash2,
   TrendingUp, Target, Phone, Pencil, Building2, CheckCircle2
 } from 'lucide-react';
 import { format, isSameMonth, parseISO, startOfMonth, endOfMonth } from 'date-fns';
@@ -105,9 +105,14 @@ export function Financeiro() {
   const [alunoToDelete, setAlunoToDelete] = useState<Aluno | null>(null);
   const [turmaToEdit, setTurmaToEdit] = useState<Turma | null>(null);
 
+  // Inline edit turma card
+  const [editingTurmaCardId, setEditingTurmaCardId] = useState<string | null>(null);
+  const [inlineTurmaForm, setInlineTurmaForm] = useState<Partial<Turma>>({});
+  const [savingInlineTurma, setSavingInlineTurma] = useState(false);
+
   // Formulários
   const emptyTurmaForm = { nome: '', produto: 'psicanalise' as ProdutoTab, data_inicio: '', data_fim: '', valor_mensalidade: '109.90', total_mensalidades: '14' };
-  const emptyAlunoForm = { nome: '', whatsapp: '', email: '', turma_id: '', data_inicio: '', dia_vencimento: '10', origem: 'direto' };
+  const emptyAlunoForm = { nome: '', whatsapp: '', email: '', turma_id: '', data_inicio: '', dia_vencimento: '10', origem: 'direto', forma_pagamento: 'boleto' };
 
   const [newTurmaForm, setNewTurmaForm] = useState(emptyTurmaForm);
   const [newAlunoForm, setNewAlunoForm] = useState(emptyAlunoForm);
@@ -179,16 +184,23 @@ export function Financeiro() {
   const previstoMes = useMemo(() => filteredPagamentos.filter(p => periodoFilter(p.data_vencimento)).reduce((s, p) => s + p.valor, 0), [filteredPagamentos, periodo]);
   const inadimplentes = useMemo(() => filteredAlunos.filter(a => a.status === 'inadimplente'), [filteredAlunos]);
 
-  // Agrupar alunos por dia de vencimento
-  const alunosPorVencimento = useMemo(() => {
-    const groups: Record<number, Aluno[]> = {};
+  // Agrupar alunos por turma
+  const alunosPorTurma = useMemo(() => {
+    const groups: Record<string, Aluno[]> = {};
     filteredAlunos.forEach(a => {
-      const dia = a.dia_vencimento ?? 10;
-      if (!groups[dia]) groups[dia] = [];
-      groups[dia].push(a);
+      const key = a.turma_id || '__sem_turma__';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(a);
     });
-    return Object.entries(groups).sort(([a], [b]) => Number(a) - Number(b));
-  }, [filteredAlunos]);
+    // Sort: turmas first (by nome), sem_turma last
+    return Object.entries(groups).sort(([a], [b]) => {
+      if (a === '__sem_turma__') return 1;
+      if (b === '__sem_turma__') return -1;
+      const ta = turmas.find(t => t.id === a)?.nome || '';
+      const tb = turmas.find(t => t.id === b)?.nome || '';
+      return ta.localeCompare(tb);
+    });
+  }, [filteredAlunos, turmas]);
 
   // CRUD turma
   const createTurma = async () => {
@@ -249,23 +261,65 @@ export function Financeiro() {
     loadData();
   };
 
+  const saveInlineTurma = async () => {
+    if (!editingTurmaCardId) return;
+    setSavingInlineTurma(true);
+    const { error } = await supabase.from('turmas').update({
+      nome: inlineTurmaForm.nome,
+      data_inicio: inlineTurmaForm.data_inicio || null,
+      data_fim: inlineTurmaForm.data_fim || null,
+      valor_mensalidade: inlineTurmaForm.valor_mensalidade || null,
+      total_mensalidades: inlineTurmaForm.total_mensalidades || null,
+    }).eq('id', editingTurmaCardId);
+    setSavingInlineTurma(false);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
+    toast({ title: 'Turma atualizada!' });
+    setEditingTurmaCardId(null);
+    loadData();
+  };
+
   // CRUD aluno
+  const gerarPagamentos = async (alunoId: string, turmaId: string, formaPgto: string, diaVenc: number, dataInicio: string | null) => {
+    const turma = turmas.find(t => t.id === turmaId);
+    const valor = turma?.valor_mensalidade || 109.90;
+    const totalParcelas = formaPgto === 'boleto' ? 14 : formaPgto === 'cartao' ? 12 : 1;
+    const start = dataInicio ? new Date(dataInicio + 'T12:00:00') : new Date();
+    const rows = Array.from({ length: totalParcelas }, (_, i) => {
+      const d = new Date(start.getFullYear(), start.getMonth() + i, diaVenc);
+      return {
+        aluno_id: alunoId,
+        turma_id: turmaId,
+        produto: activeTab,
+        valor,
+        mes_referencia: `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`,
+        data_vencimento: d.toISOString().split('T')[0],
+        numero_parcela: i + 1,
+        status: formaPgto === 'pix' ? 'pago' : 'pendente',
+        ...(formaPgto === 'pix' ? { data_pagamento: new Date().toISOString() } : {}),
+      };
+    });
+    await supabase.from('pagamentos').insert(rows);
+  };
+
   const createAluno = async () => {
     if (!newAlunoForm.nome.trim() || !newAlunoForm.turma_id) return;
     try {
-      const { error } = await supabase.from('alunos').insert({
+      const diaVenc = parseInt(newAlunoForm.dia_vencimento) || 10;
+      const { data: inserted, error } = await supabase.from('alunos').insert({
         turma_id: newAlunoForm.turma_id,
         produto: activeTab,
         nome: newAlunoForm.nome,
         whatsapp: newAlunoForm.whatsapp || null,
         email: newAlunoForm.email || null,
-        dia_vencimento: parseInt(newAlunoForm.dia_vencimento) || 10,
+        dia_vencimento: diaVenc,
         status: 'ativo',
-        mensalidades_pagas: 0,
+        mensalidades_pagas: newAlunoForm.forma_pagamento === 'pix' ? 1 : 0,
         data_inicio: newAlunoForm.data_inicio || null,
         origem_lead: newAlunoForm.origem,
+        forma_pagamento: newAlunoForm.forma_pagamento || null,
       }).select().single();
       if (error) throw error;
+      await gerarPagamentos(inserted.id, newAlunoForm.turma_id, newAlunoForm.forma_pagamento, diaVenc, newAlunoForm.data_inicio || null);
       toast({ title: 'Aluno adicionado!' });
       setShowAlunoDialog(false);
       setNewAlunoForm(emptyAlunoForm);
@@ -441,7 +495,7 @@ export function Financeiro() {
             </div>
           </Card>
 
-          {/* Alunos agrupados por vencimento */}
+          {/* Alunos agrupados por turma */}
           {filteredAlunos.length === 0 ? (
             <Card className="p-12 text-center">
               <Users className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
@@ -450,58 +504,70 @@ export function Financeiro() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {alunosPorVencimento.map(([dia, grupo]) => (
-                <Card key={dia} className="p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-bold flex items-center gap-2"><Calendar className="h-4 w-4 text-primary" />Vence dia {dia}</h3>
-                    <Badge variant="secondary">{grupo.length} alunos</Badge>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-border text-muted-foreground">
-                          <th className="text-left py-2 px-3 font-medium">Nome</th>
-                          <th className="text-left py-2 px-3 font-medium">WhatsApp</th>
-                          <th className="text-left py-2 px-3 font-medium">Turma</th>
-                          <th className="text-left py-2 px-3 font-medium">Mensalidades</th>
-                          <th className="text-left py-2 px-3 font-medium">Status</th>
-                          <th className="text-left py-2 px-3 font-medium">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {grupo.map(aluno => {
-                          const turma = turmas.find(t => t.id === aluno.turma_id);
-                          const total = turma?.total_mensalidades || 14;
-                          return (
-                            <tr key={aluno.id} className="border-b border-border/40 hover:bg-muted/40">
-                              <td className="py-2.5 px-3 font-medium">{aluno.nome}</td>
-                              <td className="py-2.5 px-3">
-                                {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">—</span>}
-                              </td>
-                              <td className="py-2.5 px-3 text-muted-foreground">{turma?.nome || '—'}</td>
-                              <td className="py-2.5 px-3">
-                                <div className="flex items-center gap-2">
-                                  <span>{aluno.mensalidades_pagas ?? 0}/{total}</span>
-                                  <Progress value={((aluno.mensalidades_pagas ?? 0) / total) * 100} className="w-16 h-1.5" />
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <Badge className={statusColors[aluno.status] || 'bg-gray-100 text-gray-800'}>{aluno.status}</Badge>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <div className="flex gap-1">
-                                  <Button variant="ghost" size="sm" onClick={() => openAlunoDetail(aluno)} title="Ver detalhes"><Eye className="h-4 w-4" /></Button>
-                                  <Button variant="ghost" size="sm" onClick={() => { setAlunoToDelete(aluno); setShowDeleteDialog(true); }} className="text-destructive hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </Card>
-              ))}
+              {alunosPorTurma.map(([turmaId, grupo]) => {
+                const turma = turmas.find(t => t.id === turmaId);
+                const turmaLabel = turmaId === '__sem_turma__' ? 'Sem turma' : (turma?.nome || turmaId);
+                return (
+                  <Card key={turmaId} className="p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-bold flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-primary" />{turmaLabel}
+                        {turma?.valor_mensalidade && <span className="text-xs font-normal text-muted-foreground ml-1">· {formatCurrency(turma.valor_mensalidade)}/mês</span>}
+                      </h3>
+                      <Badge variant="secondary">{grupo.length} aluno{grupo.length !== 1 ? 's' : ''}</Badge>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border text-muted-foreground">
+                            <th className="text-left py-2 px-3 font-medium">Nome</th>
+                            <th className="text-left py-2 px-3 font-medium">WhatsApp</th>
+                            <th className="text-left py-2 px-3 font-medium">Pagamento</th>
+                            <th className="text-left py-2 px-3 font-medium">Parcelas</th>
+                            <th className="text-left py-2 px-3 font-medium">Status</th>
+                            <th className="text-left py-2 px-3 font-medium">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {grupo.map(aluno => {
+                            const total = turma?.total_mensalidades || (aluno.forma_pagamento === 'cartao' ? 12 : aluno.forma_pagamento === 'pix' ? 1 : 14);
+                            const pgBadge: Record<string, string> = { boleto: 'bg-orange-100 text-orange-700', cartao: 'bg-blue-100 text-blue-700', pix: 'bg-green-100 text-green-700' };
+                            const pgLabel: Record<string, string> = { boleto: 'Mensalidade', cartao: 'Cartão', pix: 'À vista' };
+                            return (
+                              <tr key={aluno.id} className="border-b border-border/40 hover:bg-muted/40">
+                                <td className="py-2.5 px-3 font-medium">{aluno.nome}</td>
+                                <td className="py-2.5 px-3">
+                                  {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">—</span>}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {aluno.forma_pagamento
+                                    ? <Badge className={pgBadge[aluno.forma_pagamento] || 'bg-gray-100 text-gray-700'}>{pgLabel[aluno.forma_pagamento] || aluno.forma_pagamento}</Badge>
+                                    : <span className="text-muted-foreground text-xs">—</span>}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-2">
+                                    <span>{aluno.mensalidades_pagas ?? 0}/{total}</span>
+                                    <Progress value={((aluno.mensalidades_pagas ?? 0) / total) * 100} className="w-16 h-1.5" />
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <Badge className={statusColors[aluno.status] || 'bg-gray-100 text-gray-800'}>{aluno.status}</Badge>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <div className="flex gap-1">
+                                    <Button variant="ghost" size="sm" onClick={() => openAlunoDetail(aluno)} title="Ver detalhes"><Eye className="h-4 w-4" /></Button>
+                                    <Button variant="ghost" size="sm" onClick={() => { setAlunoToDelete(aluno); setShowDeleteDialog(true); }} className="text-destructive hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </>
@@ -521,26 +587,53 @@ export function Financeiro() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {filteredTurmas.map(turma => {
                 const count = alunos.filter(a => a.turma_id === turma.id).length;
+                const receitaTurma = pagamentos.filter(p => p.turma_id === turma.id && p.status === 'pago').reduce((s, p) => s + p.valor, 0);
+                const isEditing = editingTurmaCardId === turma.id;
                 return (
                   <Card key={turma.id} className="p-4 space-y-3">
                     <div className="flex items-start justify-between">
-                      <div>
-                        <h4 className="font-bold text-base">{turma.nome}</h4>
+                      <div className="flex-1 min-w-0">
+                        {isEditing
+                          ? <Input value={inlineTurmaForm.nome || ''} onChange={e => setInlineTurmaForm(f => ({ ...f, nome: e.target.value }))} className="font-bold text-base h-8 mb-1" autoFocus />
+                          : <h4 className="font-bold text-base">{turma.nome}</h4>}
                         <Badge className="mt-1 text-xs bg-primary/10 text-primary">{turma.tipo || turma.produto}</Badge>
                       </div>
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => openEditTurma(turma)}><Pencil className="h-3.5 w-3.5" /></Button>
-                        <Button variant="ghost" size="sm" onClick={() => deleteTurma(turma.id)} className="text-destructive hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>
+                      <div className="flex gap-1 ml-2">
+                        {isEditing ? (
+                          <>
+                            <Button size="sm" onClick={saveInlineTurma} disabled={savingInlineTurma} className="h-7 text-xs bg-primary text-white">{savingInlineTurma ? '...' : 'Salvar'}</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setEditingTurmaCardId(null)} className="h-7 text-xs">✕</Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={() => { setEditingTurmaCardId(turma.id); setInlineTurmaForm({ nome: turma.nome, data_inicio: turma.data_inicio || '', data_fim: turma.data_fim || '', valor_mensalidade: turma.valor_mensalidade, total_mensalidades: turma.total_mensalidades }); }}><Pencil className="h-3.5 w-3.5" /></Button>
+                            <Button variant="ghost" size="sm" onClick={() => deleteTurma(turma.id)} className="text-destructive hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </>
+                        )}
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                      <div><span className="font-medium text-foreground">Início:</span> {safeDate(turma.data_inicio) || '—'}</div>
-                      <div><span className="font-medium text-foreground">Fim:</span> {safeDate(turma.data_fim) || '—'}</div>
-                      <div><span className="font-medium text-foreground">Mensalidade:</span> {turma.valor_mensalidade ? formatCurrency(turma.valor_mensalidade) : '—'}</div>
-                      <div><span className="font-medium text-foreground">Parcelas:</span> {turma.total_mensalidades ?? '—'}</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {isEditing ? (
+                        <>
+                          <div><label className="text-muted-foreground">Início</label><Input type="date" value={inlineTurmaForm.data_inicio || ''} onChange={e => setInlineTurmaForm(f => ({ ...f, data_inicio: e.target.value }))} className="h-7 mt-0.5 text-xs" /></div>
+                          <div><label className="text-muted-foreground">Fim</label><Input type="date" value={inlineTurmaForm.data_fim || ''} onChange={e => setInlineTurmaForm(f => ({ ...f, data_fim: e.target.value }))} className="h-7 mt-0.5 text-xs" /></div>
+                          <div><label className="text-muted-foreground">Mensalidade (R$)</label><Input type="number" step="0.01" value={inlineTurmaForm.valor_mensalidade ?? ''} onChange={e => setInlineTurmaForm(f => ({ ...f, valor_mensalidade: parseFloat(e.target.value) || undefined }))} className="h-7 mt-0.5 text-xs" /></div>
+                          <div><label className="text-muted-foreground">Total Parcelas</label><Input type="number" value={inlineTurmaForm.total_mensalidades ?? ''} onChange={e => setInlineTurmaForm(f => ({ ...f, total_mensalidades: parseInt(e.target.value) || undefined }))} className="h-7 mt-0.5 text-xs" /></div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Início:</span> {safeDate(turma.data_inicio) || '—'}</div>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Fim:</span> {safeDate(turma.data_fim) || '—'}</div>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Mensalidade:</span> {turma.valor_mensalidade ? formatCurrency(turma.valor_mensalidade) : '—'}</div>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Parcelas:</span> {turma.total_mensalidades ?? '—'}</div>
+                        </>
+                      )}
                     </div>
                     <div className="flex items-center justify-between pt-1 border-t border-border">
-                      <span className="text-xs text-muted-foreground">{count} aluno{count !== 1 ? 's' : ''}</span>
+                      <div className="text-xs text-muted-foreground space-y-0.5">
+                        <div>{count} aluno{count !== 1 ? 's' : ''}</div>
+                        {receitaTurma > 0 && <div className="text-green-600 font-medium">Recebido: {formatCurrency(receitaTurma)}</div>}
+                      </div>
                       <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => { setSelectedTurmaId(turma.id); setSubView('alunos'); }}>Ver alunos →</Button>
                     </div>
                   </Card>
@@ -658,7 +751,27 @@ export function Financeiro() {
                 <SelectContent>{filteredTurmas.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><label className="text-sm font-medium">Data de Início</label><Input type="date" value={newAlunoForm.data_inicio} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_inicio: e.target.value })} className="mt-1" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-sm font-medium">Data de Início</label><Input type="date" value={newAlunoForm.data_inicio} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_inicio: e.target.value })} className="mt-1" /></div>
+              <div>
+                <label className="text-sm font-medium">Dia Vencimento</label>
+                <Select value={newAlunoForm.dia_vencimento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, dia_vencimento: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>{[1,5,10,15,20,25,28].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Forma de Pagamento</label>
+              <Select value={newAlunoForm.forma_pagamento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, forma_pagamento: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="boleto">Boleto — 14 mensalidades</SelectItem>
+                  <SelectItem value="cartao">Cartão — 12x</SelectItem>
+                  <SelectItem value="pix">PIX — À vista</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div>
               <label className="text-sm font-medium">Origem</label>
               <Select value={newAlunoForm.origem} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, origem: v })}>
