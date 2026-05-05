@@ -948,7 +948,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
     const nomeIdx = Number(importMapping.nome);
     const waIdx = Number(importMapping.whatsapp);
-    const emailIdx = importMapping.email !== '' ? Number(importMapping.email) : -1;
+    const emailIdx = importMapping.email !== '' && importMapping.email !== '__none__' ? Number(importMapping.email) : -1;
 
     const existingWas = new Set(leads.map(l => l.whatsapp.replace(/\D/g, '')));
 
@@ -1478,7 +1478,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                         <SelectValue placeholder="Selecionar coluna..." />
                       </SelectTrigger>
                       <SelectContent>
-                        {field === 'email' && <SelectItem value="">— Ignorar —</SelectItem>}
+                        {field === 'email' && <SelectItem value="__none__">— Ignorar —</SelectItem>}
                         {importParsed.headers.map((h, i) => (
                           <SelectItem key={i} value={String(i)}>{h || `Coluna ${i + 1}`}</SelectItem>
                         ))}
