@@ -1615,14 +1615,39 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
           {!syncGrupoResult ? (
             <div className="flex flex-col gap-4 min-h-0 flex-1">
+              {/* File upload */}
+              <label className="flex items-center gap-3 border border-dashed border-border rounded-lg px-4 py-3 cursor-pointer hover:border-primary transition-colors">
+                <Upload className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="text-sm text-muted-foreground">
+                  {syncGrupoInput ? 'Arquivo carregado — ou clique para trocar' : 'Selecionar arquivo JSON do grupo'}
+                </span>
+                <input
+                  type="file"
+                  accept=".json,.txt"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => setSyncGrupoInput(ev.target?.result as string ?? '');
+                    reader.readAsText(f, 'UTF-8');
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+
+              <p className="text-xs text-muted-foreground text-center">— ou cole o JSON abaixo —</p>
+
               <textarea
-                className="flex-1 min-h-[200px] text-xs font-mono border border-border rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder='Cole aqui o JSON do grupo (ex: [{"id":"5511999999999@c.us", "name":"Maria"}, ...])'
+                className="flex-1 min-h-[140px] text-xs font-mono border border-border rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder='[{"phoneNumber":"5511999999999@s.whatsapp.net"}, ...]'
                 value={syncGrupoInput}
                 onChange={e => setSyncGrupoInput(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                {syncGrupoInput ? `${([...syncGrupoInput.matchAll(/"phoneNumber"\s*:\s*"(\d+)@/g)].length || (syncGrupoInput.match(/\d{8,}/g) || []).length)} número(s) detectado(s) no texto` : 'Aguardando colagem...'}
+                {syncGrupoInput
+                  ? `${[...syncGrupoInput.matchAll(/"phoneNumber"\s*:\s*[\n\r\s]*"(\d+)@/g)].length || (syncGrupoInput.match(/\d{8,}/g) || []).length} número(s) detectado(s)`
+                  : 'Aguardando arquivo ou colagem...'}
               </p>
               <div className="flex justify-end gap-2 pt-2 border-t flex-shrink-0">
                 <Button variant="outline" onClick={() => setShowSyncGrupoModal(false)}>Cancelar</Button>
