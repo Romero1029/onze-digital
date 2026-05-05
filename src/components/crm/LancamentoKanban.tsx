@@ -1012,18 +1012,24 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       return digits.slice(-11);
     };
 
-    // Extract all digit sequences of 8+ chars from pasted JSON/text
-    const rawNumbers = syncGrupoInput.match(/\d{8,}/g) || [];
+    // Extract phoneNumber fields (format: "5511999999999@s.whatsapp.net") first,
+    // falling back to any 8+ digit sequence if none found
+    const phoneFieldMatches = [...syncGrupoInput.matchAll(/"phoneNumber"\s*:\s*"(\d+)@/g)].map(m => m[1]);
+    const rawNumbers = phoneFieldMatches.length > 0
+      ? phoneFieldMatches
+      : (syncGrupoInput.match(/(\d{8,})@s\.whatsapp\.net/g) || []).map(m => m.replace(/@.*/, ''))
+        .concat((syncGrupoInput.match(/\d{8,}/g) || []));
+    const uniqueRaw = [...new Set(rawNumbers)];
     // Use a Set of normalized phones AND their last-9-digit suffix for flexible matching
-    const groupPhones = new Set(rawNumbers.map(normalizePhone));
-    const groupSuffix9 = new Set(rawNumbers.map(n => normalizePhone(n).slice(-9)));
+    const groupPhones = new Set(uniqueRaw.map(normalizePhone));
+    const groupSuffix9 = new Set(uniqueRaw.map(n => normalizePhone(n).slice(-9)));
 
     const matchedLeads = leads.filter(lead => {
       const norm = normalizePhone(lead.whatsapp);
       return groupPhones.has(norm) || groupSuffix9.has(norm.slice(-9));
     });
 
-    const notFound = rawNumbers.length - matchedLeads.length;
+    const notFound = uniqueRaw.length - matchedLeads.length;
 
     const BATCH = 100;
     let updated = 0;
@@ -1616,7 +1622,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                 onChange={e => setSyncGrupoInput(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                {syncGrupoInput ? `${(syncGrupoInput.match(/\d{8,}/g) || []).length} número(s) detectado(s) no texto` : 'Aguardando colagem...'}
+                {syncGrupoInput ? `${([...syncGrupoInput.matchAll(/"phoneNumber"\s*:\s*"(\d+)@/g)].length || (syncGrupoInput.match(/\d{8,}/g) || []).length)} número(s) detectado(s) no texto` : 'Aguardando colagem...'}
               </p>
               <div className="flex justify-end gap-2 pt-2 border-t flex-shrink-0">
                 <Button variant="outline" onClick={() => setShowSyncGrupoModal(false)}>Cancelar</Button>
