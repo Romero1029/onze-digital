@@ -114,8 +114,8 @@ export function Financeiro() {
   const [savingInlineTurma, setSavingInlineTurma] = useState(false);
 
   // Formulários
-  const emptyTurmaForm = { nome: '', produto: 'psicanalise' as ProdutoTab, data_inicio: '', data_fim: '', valor_mensalidade: '109.90', total_mensalidades: '14' };
-  const emptyAlunoForm = { nome: '', whatsapp: '', email: '', turma_id: '', data_inicio: '', dia_vencimento: '10', origem: 'direto', forma_pagamento: 'boleto' };
+  const emptyTurmaForm = { nome: '', produto: 'psicanalise' as ProdutoTab, data_inicio: '', data_fim: '', valor_mensalidade: '109.90', total_mensalidades: '15' };
+  const emptyAlunoForm = { nome: '', whatsapp: '', email: '', turma_id: '', data_inicio: '', data_matricula: '', dia_vencimento: '10', origem: 'direto', forma_pagamento: 'boleto' };
 
   const [newTurmaForm, setNewTurmaForm] = useState(emptyTurmaForm);
   const [newAlunoForm, setNewAlunoForm] = useState(emptyAlunoForm);
@@ -125,6 +125,7 @@ export function Financeiro() {
   const [savingTurma, setSavingTurma] = useState(false);
   const [showPagoDialog, setShowPagoDialog] = useState(false);
   const [pagoInfo, setPagoInfo] = useState<{ pagamentoId: string; alunoId: string; data: string } | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'todos' | 'ativo' | 'inadimplente' | 'cancelado'>('todos');
 
   useEffect(() => { loadData(); }, []);
 
@@ -154,6 +155,27 @@ export function Financeiro() {
       return canAccessFinanceiroTurma(permissions, t.id);
     });
   }, [turmas, activeTab, permissions, isAdmin]);
+  const filteredPagamentos = useMemo(() => pagamentos.filter(p => p.produto === activeTab), [pagamentos, activeTab]);
+
+  // Inadimplência calculada a partir dos pagamentos reais (não do campo manual)
+  const inadimplenciaMap = useMemo(() => {
+    const map: Record<string, { diasAtraso: number; valorEmAtraso: number; parcelasAtrasadas: number }> = {};
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    filteredPagamentos.forEach(p => {
+      if (p.status !== 'pago') {
+        const venc = new Date(p.data_vencimento + 'T12:00:00');
+        if (venc < hoje) {
+          if (!map[p.aluno_id]) map[p.aluno_id] = { diasAtraso: 0, valorEmAtraso: 0, parcelasAtrasadas: 0 };
+          const dias = Math.floor((hoje.getTime() - venc.getTime()) / (1000 * 60 * 60 * 24));
+          map[p.aluno_id].diasAtraso = Math.max(map[p.aluno_id].diasAtraso, dias);
+          map[p.aluno_id].valorEmAtraso += p.valor;
+          map[p.aluno_id].parcelasAtrasadas += 1;
+        }
+      }
+    });
+    return map;
+  }, [filteredPagamentos]);
+
   const filteredAlunos = useMemo(() => {
     let r = alunos.filter(a => {
       if (a.produto !== activeTab) return false;
@@ -162,9 +184,12 @@ export function Financeiro() {
       return canAccessFinanceiroTurma(permissions, a.turma_id);
     });
     if (selectedTurmaId !== 'todas') r = r.filter(a => a.turma_id === selectedTurmaId);
+    if (statusFilter !== 'todos') {
+      if (statusFilter === 'inadimplente') r = r.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente');
+      else r = r.filter(a => a.status === statusFilter);
+    }
     return r;
-  }, [alunos, activeTab, selectedTurmaId, permissions, isAdmin]);
-  const filteredPagamentos = useMemo(() => pagamentos.filter(p => p.produto === activeTab), [pagamentos, activeTab]);
+  }, [alunos, activeTab, selectedTurmaId, permissions, isAdmin, statusFilter, inadimplenciaMap]);
 
   const currentMonth = new Date();
 
@@ -185,7 +210,8 @@ export function Financeiro() {
 
   const receitaMes = useMemo(() => filteredPagamentos.filter(p => p.status === 'pago' && periodoFilter(p.data_pagamento)).reduce((s, p) => s + p.valor, 0), [filteredPagamentos, periodo]);
   const previstoMes = useMemo(() => filteredPagamentos.filter(p => periodoFilter(p.data_vencimento)).reduce((s, p) => s + p.valor, 0), [filteredPagamentos, periodo]);
-  const inadimplentes = useMemo(() => filteredAlunos.filter(a => a.status === 'inadimplente'), [filteredAlunos]);
+
+  const contratosPendentes = useMemo(() => filteredAlunos.filter(a => !a.contrato_assinado && a.status === 'ativo').length, [filteredAlunos]);
 
   // Agrupar alunos por turma
   const alunosPorTurma = useMemo(() => {
@@ -285,7 +311,7 @@ export function Financeiro() {
   const gerarPagamentos = async (alunoId: string, turmaId: string, formaPgto: string, diaVenc: number, dataInicio: string | null) => {
     const turma = turmas.find(t => t.id === turmaId);
     const valor = turma?.valor_mensalidade || 109.90;
-    const totalParcelas = formaPgto === 'boleto' ? 14 : formaPgto === 'cartao' ? 12 : 1;
+    const totalParcelas = formaPgto === 'boleto' ? 15 : formaPgto === 'cartao' ? 12 : 1;
     const start = dataInicio ? new Date(dataInicio + 'T12:00:00') : new Date();
     const hoje = new Date().toISOString().split('T')[0];
     const rows = Array.from({ length: totalParcelas }, (_, i) => {
@@ -312,7 +338,7 @@ export function Financeiro() {
     if (!newAlunoForm.nome.trim() || !newAlunoForm.turma_id) return;
     try {
       const diaVenc = parseInt(newAlunoForm.dia_vencimento) || 10;
-      const totalMens = newAlunoForm.forma_pagamento === 'pix' ? 1 : newAlunoForm.forma_pagamento === 'cartao' ? 12 : 14;
+      const totalMens = newAlunoForm.forma_pagamento === 'pix' ? 1 : newAlunoForm.forma_pagamento === 'cartao' ? 12 : 15;
       const { data: inserted, error } = await supabase.from('alunos').insert({
         turma_id: newAlunoForm.turma_id,
         produto: activeTab,
@@ -324,6 +350,7 @@ export function Financeiro() {
         mensalidades_pagas: newAlunoForm.forma_pagamento === 'pix' ? 1 : 0,
         total_mensalidades: totalMens,
         data_inicio: newAlunoForm.data_inicio || null,
+        data_matricula: newAlunoForm.data_matricula || newAlunoForm.data_inicio || null,
         origem_lead: newAlunoForm.origem,
         forma_pagamento: newAlunoForm.forma_pagamento || null,
       }).select().single();
@@ -470,23 +497,47 @@ export function Financeiro() {
             ))}
           </div>
 
+          {/* Filtro de status */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-muted-foreground">Status:</span>
+            {([
+              { key: 'todos', label: 'Todos', color: 'bg-muted text-muted-foreground', active: 'bg-gray-700 text-white' },
+              { key: 'ativo', label: 'Ativos', color: 'bg-muted text-muted-foreground', active: 'bg-green-600 text-white' },
+              { key: 'inadimplente', label: `Inadimplentes (${inadimplentes.length})`, color: 'bg-muted text-muted-foreground', active: 'bg-red-600 text-white' },
+              { key: 'cancelado', label: 'Cancelados', color: 'bg-muted text-muted-foreground', active: 'bg-gray-500 text-white' },
+            ] as { key: typeof statusFilter; label: string; color: string; active: string }[]).map(({ key, label, color, active }) => (
+              <button key={key} onClick={() => setStatusFilter(key)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${statusFilter === key ? active : color + ' hover:bg-muted/70'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
           {/* Cards resumo */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="p-4 flex items-center gap-3">
               <div className="p-2 bg-green-100 rounded-lg"><DollarSign className="h-4 w-4 text-green-600" /></div>
-              <div><p className="text-xs text-muted-foreground">Receita — {periodoLabel[periodo]}</p><p className="text-lg font-bold text-green-600">{formatCurrency(receitaMes)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Recebido — {periodoLabel[periodo]}</p><p className="text-lg font-bold text-green-600">{formatCurrency(receitaMes)}</p></div>
             </Card>
             <Card className="p-4 flex items-center gap-3">
               <div className="p-2 bg-blue-100 rounded-lg"><Target className="h-4 w-4 text-blue-600" /></div>
               <div><p className="text-xs text-muted-foreground">Previsto — {periodoLabel[periodo]}</p><p className="text-lg font-bold text-blue-600">{formatCurrency(previstoMes)}</p></div>
             </Card>
-            <Card className="p-4 flex items-center gap-3">
+            <Card className="p-4 flex items-center gap-3 border-red-100">
               <div className="p-2 bg-red-100 rounded-lg"><AlertCircle className="h-4 w-4 text-red-600" /></div>
-              <div><p className="text-xs text-muted-foreground">Inadimplentes</p><p className="text-lg font-bold text-red-600">{inadimplentes.length}</p></div>
+              <div>
+                <p className="text-xs text-muted-foreground">Inadimplentes</p>
+                <p className="text-lg font-bold text-red-600">{inadimplentes.length}</p>
+                {totalEmAtraso > 0 && <p className="text-xs text-red-500 font-medium">{formatCurrency(totalEmAtraso)} em atraso</p>}
+              </div>
             </Card>
             <Card className="p-4 flex items-center gap-3">
               <div className="p-2 bg-purple-100 rounded-lg"><TrendingUp className="h-4 w-4 text-purple-600" /></div>
-              <div><p className="text-xs text-muted-foreground">Total Alunos Ativos</p><p className="text-lg font-bold text-purple-600">{filteredAlunos.filter(a => a.status === 'ativo').length}</p></div>
+              <div>
+                <p className="text-xs text-muted-foreground">Alunos Ativos</p>
+                <p className="text-lg font-bold text-purple-600">{filteredAlunos.filter(a => a.status === 'ativo').length}</p>
+                <p className="text-xs text-muted-foreground">{contratosPendentes > 0 ? `${contratosPendentes} sem contrato` : 'Todos c/ contrato'}</p>
+              </div>
             </Card>
           </div>
 
@@ -544,12 +595,23 @@ export function Financeiro() {
                         </thead>
                         <tbody>
                           {grupo.map(aluno => {
-                            const total = aluno.total_mensalidades || turma?.total_mensalidades || 14;
+                            const total = aluno.total_mensalidades || turma?.total_mensalidades || 15;
                             const pgBadge: Record<string, string> = { boleto: 'bg-orange-100 text-orange-700', cartao: 'bg-blue-100 text-blue-700', pix: 'bg-green-100 text-green-700' };
                             const pgLabel: Record<string, string> = { boleto: 'Mensalidade', cartao: 'Cartão', pix: 'À vista' };
+                            const inad = inadimplenciaMap[aluno.id];
                             return (
-                              <tr key={aluno.id} className="border-b border-border/40 hover:bg-muted/40">
-                                <td className="py-2.5 px-3 font-medium">{aluno.nome}</td>
+                              <tr key={aluno.id} className={`border-b border-border/40 hover:bg-muted/40 ${inad ? 'bg-red-50/40' : ''}`}>
+                                <td className="py-2.5 px-3 font-medium">
+                                  <div className="flex items-center gap-1.5">
+                                    {aluno.nome}
+                                    {aluno.contrato_assinado
+                                      ? <span title="Contrato assinado" className="text-green-600 text-[10px] font-bold">✓</span>
+                                      : aluno.contrato_enviado
+                                        ? <span title="Contrato enviado, aguardando assinatura" className="text-yellow-500 text-[10px] font-bold">✉</span>
+                                        : <span title="Sem contrato" className="text-gray-300 text-[10px]">○</span>
+                                    }
+                                  </div>
+                                </td>
                                 <td className="py-2.5 px-3">
                                   {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">—</span>}
                                 </td>
@@ -566,7 +628,16 @@ export function Financeiro() {
                                   </div>
                                 </td>
                                 <td className="py-2.5 px-3">
-                                  <Badge className={statusColors[aluno.status] || 'bg-gray-100 text-gray-800'}>{aluno.status}</Badge>
+                                  <div className="flex flex-col gap-1">
+                                    <Badge className={inad ? 'bg-red-100 text-red-800' : statusColors[aluno.status] || 'bg-gray-100 text-gray-800'}>
+                                      {inad ? 'inadimplente' : aluno.status}
+                                    </Badge>
+                                    {inad && (
+                                      <span className="text-[10px] text-red-600 font-medium leading-tight">
+                                        {inad.parcelasAtrasadas}x · {inad.diasAtraso}d · {formatCurrency(inad.valorEmAtraso)}
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-2.5 px-3">
                                   <div className="flex gap-1">
@@ -767,21 +838,22 @@ export function Financeiro() {
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-sm font-medium">Data de Início</label><Input type="date" value={newAlunoForm.data_inicio} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_inicio: e.target.value })} className="mt-1" /></div>
-              <div>
-                <label className="text-sm font-medium">Dia Vencimento</label>
-                <Select value={newAlunoForm.dia_vencimento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, dia_vencimento: v })}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>{[1,5,10,15,20,25,28].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
+              <div><label className="text-sm font-medium">Data de Matrícula</label><Input type="date" value={newAlunoForm.data_matricula} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_matricula: e.target.value })} className="mt-1" /><p className="text-[10px] text-muted-foreground mt-0.5">Data do 1º pagamento / ato de matrícula</p></div>
+              <div><label className="text-sm font-medium">Data de Início da Turma</label><Input type="date" value={newAlunoForm.data_inicio} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_inicio: e.target.value })} className="mt-1" /></div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Dia Vencimento</label>
+              <Select value={newAlunoForm.dia_vencimento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, dia_vencimento: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{[1,5,10,15,20,25,28].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-sm font-medium">Forma de Pagamento</label>
               <Select value={newAlunoForm.forma_pagamento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, forma_pagamento: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="boleto">Boleto — 14 mensalidades</SelectItem>
+                  <SelectItem value="boleto">Boleto — 15 mensalidades</SelectItem>
                   <SelectItem value="cartao">Cartão — 12x</SelectItem>
                   <SelectItem value="pix">PIX — À vista</SelectItem>
                 </SelectContent>
@@ -866,7 +938,7 @@ export function Financeiro() {
                   <Select value={editAlunoForm.forma_pagamento || ''} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, forma_pagamento: v })}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="boleto">Boleto 1+14</SelectItem>
+                      <SelectItem value="boleto">Boleto 1+15</SelectItem>
                       <SelectItem value="cartao">Cartão 12x</SelectItem>
                       <SelectItem value="pix">PIX à vista</SelectItem>
                     </SelectContent>
