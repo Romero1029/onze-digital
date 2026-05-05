@@ -15,7 +15,7 @@ import {
 import {
   Plus, Search, AlertCircle, Users, Target, DollarSign,
   Loader2, Power, Trash2, Pencil, TrendingUp, BarChart2,
-  ChevronUp, ChevronDown, Upload, FileText,
+  ChevronUp, ChevronDown, Upload, FileText, UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useKanbanColunas } from './kanban/useKanbanColunas';
@@ -699,6 +699,11 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ inserted: number; dupes: number } | null>(null);
 
+  const [showSyncGrupoModal, setShowSyncGrupoModal] = useState(false);
+  const [syncGrupoInput, setSyncGrupoInput] = useState('');
+  const [syncingGrupo, setSyncingGrupo] = useState(false);
+  const [syncGrupoResult, setSyncGrupoResult] = useState<{ updated: number; notFound: number } | null>(null);
+
   // Column management
   const [renamingColuna, setRenamingColuna] = useState<KanbanColuna | null>(null);
   const [deletingColuna, setDeletingColuna] = useState<KanbanColuna | null>(null);
@@ -995,6 +1000,41 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     }
   };
 
+  // ── Sync WhatsApp group ─────────────────────────────────────────────────────
+  const handleSyncGrupo = async () => {
+    if (!syncGrupoInput.trim()) return;
+    setSyncingGrupo(true);
+
+    // Extract all digit sequences of 8+ chars (phone numbers) from the pasted JSON/text
+    const rawNumbers = syncGrupoInput.match(/\d{8,}/g) || [];
+    // Normalize: keep only digits, strip country code leading zeros variants
+    const groupPhones = new Set(rawNumbers.map(n => n.replace(/^0+/, '')));
+
+    const matchedLeads = leads.filter(lead => {
+      const digits = lead.whatsapp.replace(/\D/g, '').replace(/^0+/, '');
+      return groupPhones.has(digits) || groupPhones.has(digits.slice(-8)) || [...groupPhones].some(p => p.endsWith(digits.slice(-8)));
+    });
+
+    const notFound = groupPhones.size - matchedLeads.length;
+
+    const BATCH = 100;
+    let updated = 0;
+    for (let i = 0; i < matchedLeads.length; i += BATCH) {
+      const ids = matchedLeads.slice(i, i + BATCH).map(l => l.id);
+      const { error } = await supabase
+        .from('lancamento_leads')
+        .update({ no_grupo: true })
+        .in('id', ids);
+      if (!error) {
+        updated += ids.length;
+        setLeads(prev => prev.map(l => ids.includes(l.id) ? { ...l, no_grupo: true } : l));
+      }
+    }
+
+    setSyncingGrupo(false);
+    setSyncGrupoResult({ updated, notFound: Math.max(0, notFound) });
+  };
+
   // ── Toggle active ───────────────────────────────────────────────────────────
   const handleToggleActive = async () => {
     if (!lancamento) return;
@@ -1264,6 +1304,10 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
             <Button variant="outline" className="gap-2" onClick={() => { setShowImportModal(true); setImportParsed(null); setImportResult(null); }}>
               <Upload className="h-4 w-4" />
               Importar CSV
+            </Button>
+            <Button variant="outline" className="gap-2" onClick={() => { setShowSyncGrupoModal(true); setSyncGrupoInput(''); setSyncGrupoResult(null); }}>
+              <UserCheck className="h-4 w-4" />
+              Sincronizar Grupo
             </Button>
             <Button variant="default" className="gap-2" onClick={() => setShowAddLeadDialog(true)}>
               <Plus className="h-4 w-4" />
@@ -1540,6 +1584,53 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                 )}
               </div>
               <Button onClick={() => setShowImportModal(false)}>Fechar</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Sincronizar Grupo WhatsApp Modal ── */}
+      <Dialog open={showSyncGrupoModal} onOpenChange={open => { if (!open) { setShowSyncGrupoModal(false); setSyncGrupoInput(''); setSyncGrupoResult(null); } }}>
+        <DialogContent className="max-w-lg flex flex-col max-h-[90vh]">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2"><UserCheck className="h-5 w-5" /> Sincronizar Grupo WhatsApp</DialogTitle>
+            <DialogDescription>
+              Cole abaixo o JSON exportado do grupo do WhatsApp. Os leads que tiverem o número detectado serão marcados como <strong>no_grupo = true</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!syncGrupoResult ? (
+            <div className="flex flex-col gap-4 min-h-0 flex-1">
+              <textarea
+                className="flex-1 min-h-[200px] text-xs font-mono border border-border rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder='Cole aqui o JSON do grupo (ex: [{"id":"5511999999999@c.us", "name":"Maria"}, ...])'
+                value={syncGrupoInput}
+                onChange={e => setSyncGrupoInput(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {syncGrupoInput ? `${(syncGrupoInput.match(/\d{8,}/g) || []).length} número(s) detectado(s) no texto` : 'Aguardando colagem...'}
+              </p>
+              <div className="flex justify-end gap-2 pt-2 border-t flex-shrink-0">
+                <Button variant="outline" onClick={() => setShowSyncGrupoModal(false)}>Cancelar</Button>
+                <Button
+                  onClick={handleSyncGrupo}
+                  disabled={syncingGrupo || !syncGrupoInput.trim()}
+                  className="gap-2"
+                >
+                  {syncingGrupo ? <><Loader2 className="h-4 w-4 animate-spin" />Sincronizando...</> : 'Marcar como no grupo'}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 text-center py-6">
+              <div className="text-4xl">✅</div>
+              <div>
+                <p className="text-lg font-semibold">{syncGrupoResult.updated} lead(s) marcado(s) como no grupo!</p>
+                {syncGrupoResult.notFound > 0 && (
+                  <p className="text-sm text-muted-foreground mt-1">{syncGrupoResult.notFound} número(s) do grupo não encontrado(s) na planilha.</p>
+                )}
+              </div>
+              <Button onClick={() => setShowSyncGrupoModal(false)}>Fechar</Button>
             </div>
           )}
         </DialogContent>
