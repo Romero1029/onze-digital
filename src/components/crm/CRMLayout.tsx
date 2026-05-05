@@ -28,8 +28,9 @@ import { Loader2 } from 'lucide-react';
 
 export function CRMLayout() {
   const { user } = useAuth();
-  const { permissions } = usePermissions();
+  const { permissions, loading: permLoading } = usePermissions();
   const [currentView, setCurrentView] = useState<View>('dashboard');
+  const [initialRedirectDone, setInitialRedirectDone] = useState(false);
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false);
   const [isFlashLeadModalOpen, setIsFlashLeadModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -39,6 +40,42 @@ export function CRMLayout() {
   const [loadingNpaEvento, setLoadingNpaEvento] = useState(false);
   const [aulaSecretaId, setAulaSecretaId] = useState<string | null>(null);
   const [loadingAulaSecreta, setLoadingAulaSecreta] = useState(false);
+
+  // Redireciona para primeira view permitida quando permissões carregam
+  useEffect(() => {
+    if (permLoading || initialRedirectDone || user?.tipo === 'admin') {
+      setInitialRedirectDone(true);
+      return;
+    }
+    const redirect = async () => {
+      if (permissions.can_view_dashboard) { setInitialRedirectDone(true); return; }
+
+      // Tenta ir para o primeiro lançamento permitido
+      if (permissions.can_view_lancamentos) {
+        let q = supabase.from('lancamentos').select('id').order('created_at', { ascending: false });
+        if (!permissions.can_view_all_lancamentos && permissions.allowed_lancamento_ids.length > 0) {
+          q = (q as any).in('id', permissions.allowed_lancamento_ids);
+        }
+        const { data } = await (q as any).limit(1);
+        if (data && data.length > 0) {
+          setCurrentView(`lancamentos_${data[0].id}` as View);
+          setInitialRedirectDone(true);
+          return;
+        }
+      }
+
+      // Fallbacks em ordem
+      if (permissions.can_view_pipeline) { setCurrentView('pipeline'); setInitialRedirectDone(true); return; }
+      if (permissions.can_view_npa) {
+        const { data } = await supabase.from('npa_eventos').select('id').order('created_at', { ascending: false }).limit(1);
+        if (data?.[0]) { setCurrentView(`npa_${data[0].id}` as View); setInitialRedirectDone(true); return; }
+      }
+      if (permissions.can_view_financeiro) { setCurrentView('financeiro'); setInitialRedirectDone(true); return; }
+      if (permissions.can_view_chat) { setCurrentView('chat'); setInitialRedirectDone(true); return; }
+      setInitialRedirectDone(true);
+    };
+    redirect();
+  }, [permLoading]);
 
   const handleAddLead = () => { setEditingLead(null); setIsLeadModalOpen(true); };
   const handleAddFlashLead = () => { setIsFlashLeadModalOpen(true); };

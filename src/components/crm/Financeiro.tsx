@@ -223,11 +223,14 @@ export function Financeiro() {
 
   const filteredAlunos = useMemo(() => {
     let result = alunos.filter(a => a.produto === activeTab);
+    if (!permissions.can_view_all_financeiro_turmas) {
+      result = result.filter(a => a.turma_id && permissions.allowed_financeiro_turma_ids.includes(a.turma_id));
+    }
     if (selectedTurmaId !== 'todas') {
       result = result.filter(a => a.turma_id === selectedTurmaId);
     }
     return result;
-  }, [alunos, activeTab, selectedTurmaId]);
+  }, [alunos, activeTab, selectedTurmaId, permissions]);
 
   const filteredPagamentos = useMemo(() => {
     return pagamentos.filter(p => p.produto === activeTab);
