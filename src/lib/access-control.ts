@@ -1,0 +1,185 @@
+export interface AccessPermissions {
+  canViewDashboard: boolean;
+  canViewPipeline: boolean;
+  canViewLancamentos: boolean;
+  canViewAllLancamentos: boolean;
+  allowedLancamentoIds: string[];
+  canViewNpa: boolean;
+  canViewAulaSecreta: boolean;
+  canViewChat: boolean;
+  canViewSheets: boolean;
+  canViewFinanceiro: boolean;
+  canViewAllFinanceiroTurmas: boolean;
+  allowedFinanceiroTurmaIds: string[];
+  canViewBalanco: boolean;
+  canViewOperacoes: boolean;
+  canViewMapaMental: boolean;
+  canViewRodrygo: boolean;
+  canViewPedagogico: boolean;
+  canViewAllTurmas: boolean;
+  allowedTurmaIds: string[];
+  canViewTeam: boolean;
+  canViewSettings: boolean;
+}
+
+export type AppView =
+  | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'balanco' | 'rodrygo'
+  | 'lancamentos_30' | 'lancamentos_31' | 'lancamentos_32'
+  | 'team' | 'settings'
+  | 'operacoes_tarefas' | 'operacoes_calendario_geral' | 'operacoes_calendario_conteudo'
+  | 'mapa_mental' | 'pedagogico';
+
+export const DEFAULT_NON_ADMIN_PERMISSIONS: AccessPermissions = {
+  canViewDashboard: true,
+  canViewPipeline: true,
+  canViewLancamentos: true,
+  canViewAllLancamentos: true,
+  allowedLancamentoIds: [],
+  canViewNpa: true,
+  canViewAulaSecreta: true,
+  canViewChat: true,
+  canViewSheets: true,
+  canViewFinanceiro: true,
+  canViewAllFinanceiroTurmas: true,
+  allowedFinanceiroTurmaIds: [],
+  canViewBalanco: true,
+  canViewOperacoes: true,
+  canViewMapaMental: true,
+  canViewRodrygo: true,
+  canViewPedagogico: true,
+  canViewAllTurmas: true,
+  allowedTurmaIds: [],
+  canViewTeam: false,
+  canViewSettings: false,
+};
+
+export const DEFAULT_ADMIN_PERMISSIONS: AccessPermissions = {
+  ...DEFAULT_NON_ADMIN_PERMISSIONS,
+  canViewTeam: true,
+  canViewSettings: true,
+};
+
+export function getDefaultPermissions(role?: string): AccessPermissions {
+  return role === 'admin' ? { ...DEFAULT_ADMIN_PERMISSIONS } : { ...DEFAULT_NON_ADMIN_PERMISSIONS };
+}
+
+export function normalizePermissionsRow(row: any, role?: string): AccessPermissions {
+  const defaults = getDefaultPermissions(role);
+
+  if (!row) return defaults;
+
+  return {
+    canViewDashboard: row.can_view_dashboard ?? defaults.canViewDashboard,
+    canViewPipeline: row.can_view_pipeline ?? defaults.canViewPipeline,
+    canViewLancamentos: row.can_view_lancamentos ?? defaults.canViewLancamentos,
+    canViewAllLancamentos: row.can_view_all_lancamentos ?? defaults.canViewAllLancamentos,
+    allowedLancamentoIds: Array.isArray(row.allowed_lancamento_ids) ? row.allowed_lancamento_ids.filter(Boolean) : defaults.allowedLancamentoIds,
+    canViewNpa: row.can_view_npa ?? defaults.canViewNpa,
+    canViewAulaSecreta: row.can_view_aula_secreta ?? defaults.canViewAulaSecreta,
+    canViewChat: row.can_view_chat ?? defaults.canViewChat,
+    canViewSheets: row.can_view_sheets ?? defaults.canViewSheets,
+    canViewFinanceiro: row.can_view_financeiro ?? defaults.canViewFinanceiro,
+    canViewAllFinanceiroTurmas: row.can_view_all_financeiro_turmas ?? defaults.canViewAllFinanceiroTurmas,
+    allowedFinanceiroTurmaIds: Array.isArray(row.allowed_financeiro_turma_ids) ? row.allowed_financeiro_turma_ids.filter(Boolean) : defaults.allowedFinanceiroTurmaIds,
+    canViewBalanco: row.can_view_balanco ?? defaults.canViewBalanco,
+    canViewOperacoes: row.can_view_operacoes ?? defaults.canViewOperacoes,
+    canViewMapaMental: row.can_view_mapa_mental ?? defaults.canViewMapaMental,
+    canViewRodrygo: row.can_view_rodrygo ?? defaults.canViewRodrygo,
+    canViewPedagogico: row.can_view_pedagogico ?? defaults.canViewPedagogico,
+    canViewAllTurmas: row.can_view_all_turmas ?? defaults.canViewAllTurmas,
+    allowedTurmaIds: Array.isArray(row.allowed_turma_ids) ? row.allowed_turma_ids.filter(Boolean) : defaults.allowedTurmaIds,
+    canViewTeam: row.can_view_team ?? defaults.canViewTeam,
+    canViewSettings: row.can_view_settings ?? defaults.canViewSettings,
+  };
+}
+
+export function permissionsToRow(permissions: AccessPermissions) {
+  return {
+    can_view_dashboard: permissions.canViewDashboard,
+    can_view_pipeline: permissions.canViewPipeline,
+    can_view_lancamentos: permissions.canViewLancamentos,
+    can_view_all_lancamentos: permissions.canViewAllLancamentos,
+    allowed_lancamento_ids: permissions.allowedLancamentoIds,
+    can_view_npa: permissions.canViewNpa,
+    can_view_aula_secreta: permissions.canViewAulaSecreta,
+    can_view_chat: permissions.canViewChat,
+    can_view_sheets: permissions.canViewSheets,
+    can_view_financeiro: permissions.canViewFinanceiro,
+    can_view_all_financeiro_turmas: permissions.canViewAllFinanceiroTurmas,
+    allowed_financeiro_turma_ids: permissions.allowedFinanceiroTurmaIds,
+    can_view_balanco: permissions.canViewBalanco,
+    can_view_operacoes: permissions.canViewOperacoes,
+    can_view_mapa_mental: permissions.canViewMapaMental,
+    can_view_rodrygo: permissions.canViewRodrygo,
+    can_view_pedagogico: permissions.canViewPedagogico,
+    can_view_all_turmas: permissions.canViewAllTurmas,
+    allowed_turma_ids: permissions.allowedTurmaIds,
+    can_view_team: permissions.canViewTeam,
+    can_view_settings: permissions.canViewSettings,
+  };
+}
+
+export function canAccessLancamento(permissions: AccessPermissions, lancamentoId: string) {
+  return permissions.canViewLancamentos && (
+    permissions.canViewAllLancamentos ||
+    permissions.allowedLancamentoIds.includes(lancamentoId)
+  );
+}
+
+export function canAccessFinanceiroTurma(permissions: AccessPermissions, turmaId: string) {
+  return permissions.canViewFinanceiro && (
+    permissions.canViewAllFinanceiroTurmas ||
+    permissions.allowedFinanceiroTurmaIds.includes(turmaId)
+  );
+}
+
+export function canAccessTurma(permissions: AccessPermissions, turmaId: string) {
+  return permissions.canViewPedagogico && (
+    permissions.canViewAllTurmas ||
+    permissions.allowedTurmaIds.includes(turmaId)
+  );
+}
+
+export function canAccessView(view: string, permissions: AccessPermissions, isAdmin: boolean) {
+  if (isAdmin) return true;
+
+  if (view.startsWith('lancamentos_')) {
+    const lancamentoId = view.replace('lancamentos_', '');
+    return canAccessLancamento(permissions, lancamentoId);
+  }
+
+  if (view.startsWith('npa_')) return permissions.canViewNpa;
+  if (view.startsWith('aula_secreta_')) return permissions.canViewAulaSecreta;
+
+  const permissionByView: Partial<Record<AppView, boolean>> = {
+    dashboard: permissions.canViewDashboard,
+    pipeline: permissions.canViewPipeline,
+    npa_overview: permissions.canViewNpa,
+    chat: permissions.canViewChat,
+    sheets: permissions.canViewSheets,
+    financeiro: permissions.canViewFinanceiro,
+    balanco: permissions.canViewBalanco,
+    rodrygo: permissions.canViewRodrygo,
+    team: permissions.canViewTeam,
+    settings: permissions.canViewSettings,
+    operacoes_tarefas: permissions.canViewOperacoes,
+    operacoes_calendario_geral: permissions.canViewOperacoes,
+    operacoes_calendario_conteudo: permissions.canViewOperacoes,
+    mapa_mental: permissions.canViewMapaMental,
+    pedagogico: permissions.canViewPedagogico,
+  };
+
+  return permissionByView[view as AppView] ?? true;
+}
+
+export function firstAllowedView(permissions: AccessPermissions, isAdmin: boolean, allowedLaunchIds: string[]) {
+  if (isAdmin || permissions.canViewDashboard) return 'dashboard' as AppView;
+  if (permissions.canViewPipeline) return 'pipeline';
+  if (permissions.canViewLancamentos && allowedLaunchIds.length > 0) return `lancamentos_${allowedLaunchIds[0]}` as AppView;
+  if (permissions.canViewNpa) return 'npa_overview';
+  if (permissions.canViewChat) return 'chat';
+  if (permissions.canViewSheets) return 'sheets';
+  if (permissions.canViewFinanceiro) return 'financeiro';
+  if (permissions.canViewPedagogico) return 'pedagogico';
+  return 'dashboard';
+}

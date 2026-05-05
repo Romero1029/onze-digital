@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { canAccessTurma } from '@/lib/access-control';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -87,10 +88,12 @@ export function Pedagogico() {
       })
     );
 
-    // Filter for professora role — only their turmas
-    const filtered = user?.tipo === 'professora'
-      ? augmented.filter(t => t.professora_id === user.id)
-      : augmented;
+    const filtered = augmented.filter((turma) => {
+      if (isAdmin) return true;
+      if (user?.tipo === 'professora') return turma.professora_id === user.id;
+      if (!user?.permissions?.canViewPedagogico) return false;
+      return canAccessTurma(user.permissions, turma.id);
+    });
 
     setTurmas(filtered);
 

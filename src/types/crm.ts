@@ -99,6 +99,7 @@ export interface Task {
   produto: string;
   lancamento?: string;
   status: 'a_fazer' | 'em_andamento' | 'revisao' | 'concluido';
+  video_url?: string;
   criado_por_id?: string;
   created_at: string;
   updated_at: string;
