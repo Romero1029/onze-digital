@@ -1442,8 +1442,8 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
       {/* ── Import CSV Modal ── */}
       <Dialog open={showImportModal} onOpenChange={open => { if (!open) { setShowImportModal(false); setImportParsed(null); setImportResult(null); } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        <DialogContent className="max-w-lg flex flex-col max-h-[90vh]">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> Importar Leads via CSV</DialogTitle>
             <DialogDescription>
               Selecione um arquivo .csv exportado do Google Sheets, Excel ou similar. Precisa ter pelo menos as colunas de nome e WhatsApp.
@@ -1464,39 +1464,39 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
           )}
 
           {importParsed && !importResult && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">{importParsed.rows.length} linha(s) detectada(s). Configure o mapeamento de colunas:</p>
-              <div className="grid grid-cols-1 gap-3">
-                {(['nome', 'whatsapp', 'email'] as const).map(field => (
-                  <div key={field} className="flex items-center gap-3">
-                    <span className="text-sm w-20 capitalize font-medium">{field === 'nome' ? 'Nome *' : field === 'whatsapp' ? 'WhatsApp *' : 'Email'}</span>
-                    <Select
-                      value={importMapping[field]}
-                      onValueChange={v => setImportMapping(m => ({ ...m, [field]: v }))}
-                    >
-                      <SelectTrigger className="flex-1 h-8 text-sm">
-                        <SelectValue placeholder="Selecionar coluna..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {field === 'email' && <SelectItem value="__none__">— Ignorar —</SelectItem>}
-                        {importParsed.headers.map((h, i) => (
-                          <SelectItem key={i} value={String(i)}>{h || `Coluna ${i + 1}`}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
-              </div>
+            <div className="flex flex-col gap-4 min-h-0 flex-1">
+              <div className="overflow-y-auto flex-1 space-y-4 pr-1">
+                <p className="text-sm text-muted-foreground">{importParsed.rows.length} linha(s) detectada(s). Configure o mapeamento de colunas:</p>
+                <div className="grid grid-cols-1 gap-3">
+                  {(['nome', 'whatsapp', 'email'] as const).map(field => (
+                    <div key={field} className="flex items-center gap-3">
+                      <span className="text-sm w-24 shrink-0 font-medium">{field === 'nome' ? 'Nome *' : field === 'whatsapp' ? 'WhatsApp *' : 'Email'}</span>
+                      <Select
+                        value={importMapping[field]}
+                        onValueChange={v => setImportMapping(m => ({ ...m, [field]: v }))}
+                      >
+                        <SelectTrigger className="flex-1 h-9 text-sm">
+                          <SelectValue placeholder="Selecionar coluna..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {field === 'email' && <SelectItem value="__none__">— Ignorar —</SelectItem>}
+                          {importParsed.headers.map((h, i) => (
+                            <SelectItem key={i} value={String(i)}>{h || `Coluna ${i + 1}`}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
 
-              {importParsed.rows.length > 0 && (
                 <div className="border rounded-lg overflow-hidden">
                   <p className="text-xs text-muted-foreground px-3 py-1.5 bg-muted border-b">Prévia (primeiras 3 linhas)</p>
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto max-h-36">
                     <table className="text-xs w-full">
                       <thead>
                         <tr className="border-b bg-muted/50">
                           {importParsed.headers.map((h, i) => (
-                            <th key={i} className="px-2 py-1.5 text-left font-medium text-muted-foreground">{h || `Col ${i + 1}`}</th>
+                            <th key={i} className="px-2 py-1.5 text-left font-medium text-muted-foreground whitespace-nowrap">{h || `Col ${i + 1}`}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1504,7 +1504,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                         {importParsed.rows.slice(0, 3).map((row, ri) => (
                           <tr key={ri} className="border-b last:border-0">
                             {row.map((cell, ci) => (
-                              <td key={ci} className="px-2 py-1.5 truncate max-w-[120px]">{cell}</td>
+                              <td key={ci} className="px-2 py-1.5 truncate max-w-[100px] whitespace-nowrap">{cell}</td>
                             ))}
                           </tr>
                         ))}
@@ -1512,9 +1512,9 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                     </table>
                   </div>
                 </div>
-              )}
+              </div>
 
-              <div className="flex justify-between items-center pt-2">
+              <div className="flex justify-between items-center pt-2 border-t flex-shrink-0">
                 <button onClick={() => setImportParsed(null)} className="text-sm text-muted-foreground hover:text-foreground">Trocar arquivo</button>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => setShowImportModal(false)}>Cancelar</Button>
