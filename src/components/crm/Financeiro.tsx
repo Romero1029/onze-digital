@@ -10,12 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/ui/use-toast';
 import {
   Plus, DollarSign, Users, AlertCircle, Eye, Trash2,
   TrendingUp, Target, Phone, Pencil, Building2, CheckCircle2
 } from 'lucide-react';
-import { format, isSameMonth, parseISO, startOfMonth, endOfMonth } from 'date-fns';
+import { format, isSameMonth, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 interface Turma {
@@ -38,20 +40,31 @@ interface Aluno {
   whatsapp?: string;
   email?: string;
   cpf?: string;
+  data_nascimento?: string;
+  endereco?: string;
+  cep?: string;
+  cidade_estado?: string;
+  pais?: string;
   dia_vencimento?: number;
+  dia_vencimento_contrato?: string;
   status: 'ativo' | 'inadimplente' | 'cancelado' | 'concluido';
   mensalidades_pagas?: number;
   total_mensalidades?: number;
   data_inicio?: string;
   data_fim?: string;
+  data_matricula?: string;
   origem_lead?: string;
   valor_mensalidade?: number;
   forma_pagamento?: string;
   observacoes?: string;
+  forms_respondido?: boolean;
+  forms_respondido_em?: string;
   contrato_enviado?: boolean;
   contrato_enviado_em?: string;
   contrato_assinado?: boolean;
   contrato_assinado_em?: string;
+  autentique_documento_id?: string;
+  autentique_link_assinatura?: string;
   created_at: string;
 }
 
@@ -71,6 +84,9 @@ interface Pagamento {
 
 type ProdutoTab = 'psicanalise' | 'numerologia';
 type SubView = 'alunos' | 'turmas';
+type PaymentMethod = 'boleto' | 'cartao' | 'avista';
+type PaymentFilter = 'todos' | PaymentMethod;
+type DueFilter = 'todos' | 'vencidos' | 'hoje' | 'proximos_7' | 'proximos_30' | 'quitados';
 
 const formatCurrency = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -80,12 +96,135 @@ const safeDate = (s?: string) => {
   try { return format(parseISO(s), 'dd/MM/yyyy', { locale: ptBR }); } catch { return s; }
 };
 
+const todayDateInput = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+
+const toDateInput = (value?: string | null) => {
+  if (!value) return '';
+  return value.split('T')[0];
+};
+
+const formatLocalDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const parseDateOnly = (value?: string | null) => {
+  if (!value) return null;
+  const [year, month, day] = value.split('T')[0].split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 12, 0, 0);
+};
+
+const dateWithClampedDay = (year: number, month: number, day: number) => {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(day, lastDay), 12, 0, 0);
+};
+
+const normalizePaymentMethod = (value?: string | null): PaymentMethod => {
+  const normalized = (value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  if (normalized === 'cartao') return 'cartao';
+  if (normalized === 'pix' || normalized === 'avista' || normalized === 'a_vista' || normalized === 'a vista') return 'avista';
+  return 'boleto';
+};
+
+const paymentMethodTotal = (method?: string | null) => {
+  const normalized = normalizePaymentMethod(method);
+  if (normalized === 'cartao') return 12;
+  if (normalized === 'avista') return 1;
+  return 15;
+};
+
+const extractDueDay = (value?: string | number | null) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const match = String(value || '').match(/\d+/);
+  return match ? Number(match[0]) : 10;
+};
+
+const buildInstallments = ({
+  alunoId,
+  turmaId,
+  produto,
+  valor,
+  method,
+  diaVencimento,
+  dataMatricula,
+  existingPaidNumbers = new Set<number>(),
+  minTotal,
+}: {
+  alunoId: string;
+  turmaId: string;
+  produto: string;
+  valor: number;
+  method: PaymentMethod;
+  diaVencimento: number;
+  dataMatricula?: string | null;
+  existingPaidNumbers?: Set<number>;
+  minTotal?: number;
+}) => {
+  const matricula = parseDateOnly(dataMatricula) || new Date();
+  const targetTotal = Math.max(paymentMethodTotal(method), minTotal || 0);
+  const matriculaDate = formatLocalDate(matricula);
+
+  return Array.from({ length: targetTotal }, (_, index) => {
+    const numeroParcela = index + 1;
+    if (existingPaidNumbers.has(numeroParcela)) return null;
+
+    const dueDate = index === 0
+      ? matricula
+      : dateWithClampedDay(matricula.getFullYear(), matricula.getMonth() + index, diaVencimento);
+    const dueDateText = formatLocalDate(dueDate);
+    const mesReferencia = formatLocalDate(new Date(dueDate.getFullYear(), dueDate.getMonth(), 1, 12, 0, 0));
+    const paidByPlan = method === 'cartao' || method === 'avista' || (method === 'boleto' && index === 0);
+
+    return {
+      aluno_id: alunoId,
+      turma_id: turmaId,
+      produto,
+      valor,
+      mes_referencia: mesReferencia,
+      data_vencimento: dueDateText,
+      numero_parcela: numeroParcela,
+      status: paidByPlan ? 'pago' : 'pendente',
+      data_pagamento: paidByPlan ? matriculaDate : null,
+      observacoes: index === 0 ? 'Ato de matricula' : null,
+    };
+  }).filter(Boolean);
+};
+
 const statusColors: Record<string, string> = {
   ativo: 'bg-green-100 text-green-800',
   inadimplente: 'bg-red-100 text-red-800',
   cancelado: 'bg-gray-100 text-gray-800',
   concluido: 'bg-blue-100 text-blue-800',
 };
+
+const paymentLabels: Record<PaymentMethod, string> = {
+  boleto: 'Boleto',
+  cartao: 'Cartao',
+  avista: 'A vista',
+};
+
+const getEmptyAlunoForm = () => ({
+  nome: '',
+  whatsapp: '',
+  email: '',
+  cpf: '',
+  data_nascimento: '',
+  pais: 'Brasil',
+  endereco: '',
+  cep: '',
+  cidade_estado: '',
+  turma_id: '',
+  data_inicio: '',
+  data_fim: '',
+  data_matricula: todayDateInput(),
+  dia_vencimento: '10',
+  origem: 'direto',
+  forma_pagamento: 'boleto' as PaymentMethod,
+  valor_mensalidade: '',
+  observacoes: '',
+});
 
 export function Financeiro() {
   const { permissions, isAdmin } = useAuth();
@@ -113,9 +252,9 @@ export function Financeiro() {
   const [inlineTurmaForm, setInlineTurmaForm] = useState<Partial<Turma>>({});
   const [savingInlineTurma, setSavingInlineTurma] = useState(false);
 
-  // Formulários
+  // Formularios
   const emptyTurmaForm = { nome: '', produto: 'psicanalise' as ProdutoTab, data_inicio: '', data_fim: '', valor_mensalidade: '109.90', total_mensalidades: '15' };
-  const emptyAlunoForm = { nome: '', whatsapp: '', email: '', turma_id: '', data_inicio: '', data_matricula: '', dia_vencimento: '10', origem: 'direto', forma_pagamento: 'boleto' };
+  const emptyAlunoForm = getEmptyAlunoForm();
 
   const [newTurmaForm, setNewTurmaForm] = useState(emptyTurmaForm);
   const [newAlunoForm, setNewAlunoForm] = useState(emptyAlunoForm);
@@ -126,6 +265,8 @@ export function Financeiro() {
   const [showPagoDialog, setShowPagoDialog] = useState(false);
   const [pagoInfo, setPagoInfo] = useState<{ pagamentoId: string; alunoId: string; data: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<'todos' | 'ativo' | 'inadimplente' | 'cancelado'>('todos');
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('todos');
+  const [dueFilter, setDueFilter] = useState<DueFilter>('todos');
 
   useEffect(() => { loadData(); }, []);
 
@@ -134,7 +275,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
         supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, created_at').order('created_at', { ascending: false }).limit(200),
-        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, dia_vencimento, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, origem_lead, valor_mensalidade, forma_pagamento, observacoes, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, created_at').order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
       ]);
       if (turmasRes.data) setTurmas(turmasRes.data);
@@ -157,7 +298,7 @@ export function Financeiro() {
   }, [turmas, activeTab, permissions, isAdmin]);
   const filteredPagamentos = useMemo(() => pagamentos.filter(p => p.produto === activeTab), [pagamentos, activeTab]);
 
-  // Inadimplência calculada a partir dos pagamentos reais (não do campo manual)
+  // Inadimplencia calculada a partir dos pagamentos reais (nao do campo manual)
   const inadimplenciaMap = useMemo(() => {
     const map: Record<string, { diasAtraso: number; valorEmAtraso: number; parcelasAtrasadas: number }> = {};
     const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
@@ -177,6 +318,28 @@ export function Financeiro() {
   }, [filteredPagamentos]);
 
   const filteredAlunos = useMemo(() => {
+    const today = parseDateOnly(todayDateInput())!;
+    const matchesDueFilter = (alunoId: string) => {
+      if (dueFilter === 'todos') return true;
+      const parcelasAbertas = filteredPagamentos
+        .filter(p => p.aluno_id === alunoId && p.status !== 'pago')
+        .filter(p => p.data_vencimento)
+        .sort((a, b) => String(a.data_vencimento).localeCompare(String(b.data_vencimento)));
+
+      if (dueFilter === 'quitados') return parcelasAbertas.length === 0;
+      if (parcelasAbertas.length === 0) return false;
+
+      const vencimento = parseDateOnly(parcelasAbertas[0].data_vencimento);
+      if (!vencimento) return false;
+      const diffDays = Math.floor((vencimento.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (dueFilter === 'vencidos') return diffDays < 0;
+      if (dueFilter === 'hoje') return diffDays === 0;
+      if (dueFilter === 'proximos_7') return diffDays >= 0 && diffDays <= 7;
+      if (dueFilter === 'proximos_30') return diffDays >= 0 && diffDays <= 30;
+      return true;
+    };
+
     let r = alunos.filter(a => {
       if (a.produto !== activeTab) return false;
       if (isAdmin) return true;
@@ -188,12 +351,18 @@ export function Financeiro() {
       if (statusFilter === 'inadimplente') r = r.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente');
       else r = r.filter(a => a.status === statusFilter);
     }
+    if (paymentFilter !== 'todos') {
+      r = r.filter(a => normalizePaymentMethod(a.forma_pagamento) === paymentFilter);
+    }
+    if (dueFilter !== 'todos') {
+      r = r.filter(a => matchesDueFilter(a.id));
+    }
     return r;
-  }, [alunos, activeTab, selectedTurmaId, permissions, isAdmin, statusFilter, inadimplenciaMap]);
+  }, [alunos, activeTab, selectedTurmaId, permissions, isAdmin, statusFilter, paymentFilter, dueFilter, inadimplenciaMap, filteredPagamentos]);
 
   const currentMonth = new Date();
 
-  const periodoLabel: Record<string, string> = { this_month: 'Este mês', last_month: 'Mês passado', last_3m: 'Últimos 3 meses', this_year: 'Este ano', all: 'Tudo' };
+  const periodoLabel: Record<string, string> = { this_month: 'Este mes', last_month: 'Mes passado', last_3m: 'Ultimos 3 meses', this_year: 'Este ano', all: 'Tudo' };
 
   const periodoFilter = (dateStr?: string | null) => {
     if (!dateStr) return false;
@@ -285,7 +454,7 @@ export function Financeiro() {
   };
 
   const deleteTurma = async (id: string) => {
-    if (!confirm('Excluir turma? Os alunos não serão deletados.')) return;
+    if (!confirm('Excluir turma? Os alunos nao serao deletados.')) return;
     const { error } = await supabase.from('turmas').delete().eq('id', id);
     if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
     toast({ title: 'Turma removida!' });
@@ -310,54 +479,138 @@ export function Financeiro() {
   };
 
   // CRUD aluno
-  const gerarPagamentos = async (alunoId: string, turmaId: string, formaPgto: string, diaVenc: number, dataInicio: string | null) => {
+  const getValorEfetivo = (turmaId: string, valorAluno?: number | null) => {
     const turma = turmas.find(t => t.id === turmaId);
-    const valor = turma?.valor_mensalidade || 109.90;
-    const totalParcelas = formaPgto === 'boleto' ? 15 : formaPgto === 'cartao' ? 12 : 1;
-    const start = dataInicio ? new Date(dataInicio + 'T12:00:00') : new Date();
-    const hoje = new Date().toISOString().split('T')[0];
-    const rows = Array.from({ length: totalParcelas }, (_, i) => {
-      const d = new Date(start.getFullYear(), start.getMonth() + i, diaVenc);
-      // mes_referencia is DATE type in DB — use first day of the month
-      const mesRef = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-      return {
-        aluno_id: alunoId,
-        turma_id: turmaId,
-        produto: activeTab,
-        valor,
-        mes_referencia: mesRef,
-        data_vencimento: d.toISOString().split('T')[0],
-        numero_parcela: i + 1,
-        status: formaPgto === 'pix' ? 'pago' : 'pendente',
-        ...(formaPgto === 'pix' ? { data_pagamento: hoje } : {}),
-      };
+    return Number(valorAluno ?? turma?.valor_mensalidade ?? 109.90);
+  };
+
+  const atualizarContadoresAluno = async (alunoId: string) => {
+    const { data, error } = await supabase
+      .from('pagamentos')
+      .select('status')
+      .eq('aluno_id', alunoId);
+
+    if (error) return;
+
+    await supabase
+      .from('alunos')
+      .update({
+        mensalidades_pagas: (data || []).filter(p => p.status === 'pago').length,
+        total_mensalidades: data?.length || 0,
+      })
+      .eq('id', alunoId);
+  };
+
+  const sincronizarParcelasAluno = async ({
+    alunoId,
+    turmaId,
+    produto,
+    method,
+    diaVencimento,
+    dataMatricula,
+    valor,
+  }: {
+    alunoId: string;
+    turmaId: string;
+    produto: string;
+    method: PaymentMethod;
+    diaVencimento: number;
+    dataMatricula?: string | null;
+    valor: number;
+  }) => {
+    const existentes = pagamentos
+      .filter(p => p.aluno_id === alunoId)
+      .sort((a, b) => (a.numero_parcela || 0) - (b.numero_parcela || 0));
+    const pagas = existentes.filter(p => p.status === 'pago');
+    const numerosPagos = new Set(pagas.map(p => p.numero_parcela || 0).filter(Boolean));
+    const maiorParcelaPaga = Math.max(0, ...Array.from(numerosPagos));
+    const total = Math.max(paymentMethodTotal(method), maiorParcelaPaga, pagas.length);
+    const abertas = existentes.filter(p => p.status !== 'pago');
+
+    if (abertas.length > 0) {
+      const { error } = await supabase.from('pagamentos').delete().in('id', abertas.map(p => p.id));
+      if (error) throw error;
+    }
+
+    if (pagas.length > 0) {
+      const { error } = await supabase
+        .from('pagamentos')
+        .update({ turma_id: turmaId, produto })
+        .eq('aluno_id', alunoId)
+        .eq('status', 'pago');
+      if (error) throw error;
+    }
+
+    const rows = buildInstallments({
+      alunoId,
+      turmaId,
+      produto,
+      valor,
+      method,
+      diaVencimento,
+      dataMatricula,
+      existingPaidNumbers: numerosPagos,
+      minTotal: total,
     });
-    const { error } = await supabase.from('pagamentos').insert(rows);
-    if (error) console.error('Erro ao gerar pagamentos:', error.message);
+
+    if (rows.length > 0) {
+      const { error } = await supabase.from('pagamentos').insert(rows as any[]);
+      if (error) throw error;
+    }
+
+    const pagasNoPlano = rows.filter((row: any) => row.status === 'pago').length + pagas.length;
+    const { error } = await supabase
+      .from('alunos')
+      .update({ mensalidades_pagas: pagasNoPlano, total_mensalidades: total })
+      .eq('id', alunoId);
+    if (error) throw error;
   };
 
   const createAluno = async () => {
     if (!newAlunoForm.nome.trim() || !newAlunoForm.turma_id) return;
     try {
-      const diaVenc = parseInt(newAlunoForm.dia_vencimento) || 10;
-      const totalMens = newAlunoForm.forma_pagamento === 'pix' ? 1 : newAlunoForm.forma_pagamento === 'cartao' ? 12 : 15;
+      const method = normalizePaymentMethod(newAlunoForm.forma_pagamento);
+      const diaVenc = extractDueDay(newAlunoForm.dia_vencimento);
+      const totalMens = paymentMethodTotal(method);
+      const valorAluno = newAlunoForm.valor_mensalidade ? parseFloat(newAlunoForm.valor_mensalidade) : null;
+      const valorEfetivo = getValorEfetivo(newAlunoForm.turma_id, valorAluno);
       const { data: inserted, error } = await supabase.from('alunos').insert({
         turma_id: newAlunoForm.turma_id,
         produto: activeTab,
         nome: newAlunoForm.nome,
         whatsapp: newAlunoForm.whatsapp || null,
         email: newAlunoForm.email || null,
+        cpf: newAlunoForm.cpf || null,
+        data_nascimento: newAlunoForm.data_nascimento || null,
+        pais: newAlunoForm.pais || 'Brasil',
+        endereco: newAlunoForm.endereco || null,
+        cep: newAlunoForm.cep || null,
+        cidade_estado: newAlunoForm.cidade_estado || null,
         dia_vencimento: diaVenc,
+        dia_vencimento_contrato: `dia ${diaVenc}`,
         status: 'ativo',
-        mensalidades_pagas: newAlunoForm.forma_pagamento === 'pix' ? 1 : 0,
+        mensalidades_pagas: method === 'boleto' ? 1 : totalMens,
         total_mensalidades: totalMens,
         data_inicio: newAlunoForm.data_inicio || null,
-        data_matricula: newAlunoForm.data_matricula || newAlunoForm.data_inicio || null,
+        data_fim: newAlunoForm.data_fim || null,
+        data_matricula: newAlunoForm.data_matricula || todayDateInput(),
         origem_lead: newAlunoForm.origem,
-        forma_pagamento: newAlunoForm.forma_pagamento || null,
+        valor_mensalidade: valorAluno,
+        forma_pagamento: method,
+        observacoes: newAlunoForm.observacoes || null,
       }).select().single();
       if (error) throw error;
-      await gerarPagamentos(inserted.id, newAlunoForm.turma_id, newAlunoForm.forma_pagamento, diaVenc, newAlunoForm.data_inicio || null);
+      const rows = buildInstallments({
+        alunoId: inserted.id,
+        turmaId: newAlunoForm.turma_id,
+        produto: activeTab,
+        valor: valorEfetivo,
+        method,
+        diaVencimento: diaVenc,
+        dataMatricula: newAlunoForm.data_matricula || todayDateInput(),
+      });
+      const { error: pagamentosError } = await supabase.from('pagamentos').insert(rows as any[]);
+      if (pagamentosError) throw pagamentosError;
       toast({ title: 'Aluno adicionado!' });
       setShowAlunoDialog(false);
       setNewAlunoForm(emptyAlunoForm);
@@ -374,16 +627,30 @@ export function Financeiro() {
       whatsapp: a.whatsapp || '',
       email: a.email || '',
       cpf: a.cpf || '',
+      data_nascimento: a.data_nascimento || '',
+      pais: a.pais || 'Brasil',
+      endereco: a.endereco || '',
+      cep: a.cep || '',
+      cidade_estado: a.cidade_estado || '',
       turma_id: a.turma_id,
-      dia_vencimento: a.dia_vencimento,
+      dia_vencimento: a.dia_vencimento || extractDueDay(a.dia_vencimento_contrato),
+      dia_vencimento_contrato: a.dia_vencimento_contrato || '',
       data_inicio: a.data_inicio || '',
+      data_fim: a.data_fim || '',
+      data_matricula: a.data_matricula || todayDateInput(),
       status: a.status,
       origem_lead: a.origem_lead || '',
       mensalidades_pagas: a.mensalidades_pagas || 0,
       valor_mensalidade: a.valor_mensalidade ?? undefined,
-      forma_pagamento: a.forma_pagamento || '',
+      forma_pagamento: normalizePaymentMethod(a.forma_pagamento),
+      forms_respondido: a.forms_respondido ?? false,
+      forms_respondido_em: toDateInput(a.forms_respondido_em),
       contrato_enviado: a.contrato_enviado ?? false,
+      contrato_enviado_em: toDateInput(a.contrato_enviado_em),
       contrato_assinado: a.contrato_assinado ?? false,
+      contrato_assinado_em: toDateInput(a.contrato_assinado_em),
+      autentique_documento_id: a.autentique_documento_id || '',
+      autentique_link_assinatura: a.autentique_link_assinatura || '',
       total_mensalidades: a.total_mensalidades,
       observacoes: a.observacoes || '',
     });
@@ -394,33 +661,77 @@ export function Financeiro() {
     if (!alunoDetail) return;
     setSavingAluno(true);
     try {
+      const nextTurmaId = editAlunoForm.turma_id || alunoDetail.turma_id;
+      const nextMethod = normalizePaymentMethod(editAlunoForm.forma_pagamento || alunoDetail.forma_pagamento);
+      const nextDiaVenc = extractDueDay(editAlunoForm.dia_vencimento || editAlunoForm.dia_vencimento_contrato || alunoDetail.dia_vencimento || alunoDetail.dia_vencimento_contrato);
+      const nextDataMatricula = editAlunoForm.data_matricula || alunoDetail.data_matricula || todayDateInput();
+      const nextValorAluno = editAlunoForm.valor_mensalidade ?? null;
+      const valorEfetivo = getValorEfetivo(nextTurmaId, nextValorAluno);
+      const targetTotal = paymentMethodTotal(nextMethod);
+      const nowIso = new Date().toISOString();
+      const checkedDate = (checked?: boolean, formValue?: string, previousValue?: string) => {
+        if (!checked) return null;
+        if (formValue) return new Date(`${formValue}T12:00:00`).toISOString();
+        return previousValue || nowIso;
+      };
+      const currentParcelas = pagamentos.filter(p => p.aluno_id === alunoDetail.id);
+      const financialChanged =
+        nextTurmaId !== alunoDetail.turma_id ||
+        nextMethod !== normalizePaymentMethod(alunoDetail.forma_pagamento) ||
+        nextDiaVenc !== extractDueDay(alunoDetail.dia_vencimento || alunoDetail.dia_vencimento_contrato) ||
+        toDateInput(nextDataMatricula) !== toDateInput(alunoDetail.data_matricula) ||
+        Number(nextValorAluno ?? 0) !== Number(alunoDetail.valor_mensalidade ?? 0) ||
+        currentParcelas.length === 0 ||
+        currentParcelas.length < targetTotal;
+
       const updateData: any = {
         nome: editAlunoForm.nome || alunoDetail.nome,
         whatsapp: editAlunoForm.whatsapp || null,
         email: editAlunoForm.email || null,
         cpf: editAlunoForm.cpf || null,
-        turma_id: editAlunoForm.turma_id || alunoDetail.turma_id,
-        dia_vencimento: editAlunoForm.dia_vencimento || null,
+        data_nascimento: editAlunoForm.data_nascimento || null,
+        pais: editAlunoForm.pais || 'Brasil',
+        endereco: editAlunoForm.endereco || null,
+        cep: editAlunoForm.cep || null,
+        cidade_estado: editAlunoForm.cidade_estado || null,
+        turma_id: nextTurmaId,
+        dia_vencimento: nextDiaVenc,
+        dia_vencimento_contrato: `dia ${nextDiaVenc}`,
         data_inicio: editAlunoForm.data_inicio || null,
+        data_fim: editAlunoForm.data_fim || null,
+        data_matricula: nextDataMatricula,
         status: editAlunoForm.status || alunoDetail.status,
         origem_lead: editAlunoForm.origem_lead || null,
-        mensalidades_pagas: editAlunoForm.mensalidades_pagas ?? alunoDetail.mensalidades_pagas,
-        valor_mensalidade: editAlunoForm.valor_mensalidade || null,
-        forma_pagamento: editAlunoForm.forma_pagamento || null,
+        valor_mensalidade: nextValorAluno,
+        forma_pagamento: nextMethod,
+        forms_respondido: editAlunoForm.forms_respondido ?? false,
+        forms_respondido_em: checkedDate(editAlunoForm.forms_respondido, editAlunoForm.forms_respondido_em, alunoDetail.forms_respondido_em),
         contrato_enviado: editAlunoForm.contrato_enviado ?? false,
+        contrato_enviado_em: checkedDate(editAlunoForm.contrato_enviado, editAlunoForm.contrato_enviado_em, alunoDetail.contrato_enviado_em),
         contrato_assinado: editAlunoForm.contrato_assinado ?? false,
-        total_mensalidades: editAlunoForm.total_mensalidades ?? null,
+        contrato_assinado_em: checkedDate(editAlunoForm.contrato_assinado, editAlunoForm.contrato_assinado_em, alunoDetail.contrato_assinado_em),
+        autentique_documento_id: editAlunoForm.autentique_documento_id || null,
+        autentique_link_assinatura: editAlunoForm.autentique_link_assinatura || null,
+        total_mensalidades: targetTotal,
         observacoes: editAlunoForm.observacoes || null,
       };
       const { error } = await supabase.from('alunos').update(updateData).eq('id', alunoDetail.id);
-      // Se valor personalizado definido, atualiza parcelas pendentes deste aluno
-      if (!error && editAlunoForm.valor_mensalidade) {
-        await supabase.from('pagamentos')
-          .update({ valor: editAlunoForm.valor_mensalidade })
-          .eq('aluno_id', alunoDetail.id)
-          .eq('status', 'pendente');
-      }
       if (error) throw error;
+
+      if (financialChanged) {
+        await sincronizarParcelasAluno({
+          alunoId: alunoDetail.id,
+          turmaId: nextTurmaId,
+          produto: activeTab,
+          method: nextMethod,
+          diaVencimento: nextDiaVenc,
+          dataMatricula: nextDataMatricula,
+          valor: valorEfetivo,
+        });
+      } else {
+        await atualizarContadoresAluno(alunoDetail.id);
+      }
+
       toast({ title: 'Aluno atualizado!' });
       setShowAlunoDetail(false);
       loadData();
@@ -443,18 +754,16 @@ export function Financeiro() {
   };
 
   const abrirPagoDialog = (pagamentoId: string, alunoId: string) => {
-    const hoje = new Date().toISOString().split('T')[0];
+    const hoje = todayDateInput();
     setPagoInfo({ pagamentoId, alunoId, data: hoje });
     setShowPagoDialog(true);
   };
 
   const confirmarPago = async () => {
     if (!pagoInfo) return;
-    const dataISO = new Date(pagoInfo.data + 'T12:00:00').toISOString();
-    const { error } = await supabase.from('pagamentos').update({ status: 'pago', data_pagamento: dataISO }).eq('id', pagoInfo.pagamentoId);
+    const { error } = await supabase.from('pagamentos').update({ status: 'pago', data_pagamento: pagoInfo.data }).eq('id', pagoInfo.pagamentoId);
     if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
-    const { data } = await supabase.from('alunos').select('mensalidades_pagas').eq('id', pagoInfo.alunoId).single();
-    await supabase.from('alunos').update({ mensalidades_pagas: (data?.mensalidades_pagas || 0) + 1 }).eq('id', pagoInfo.alunoId);
+    await atualizarContadoresAluno(pagoInfo.alunoId);
     toast({ title: 'Pagamento confirmado!' });
     setShowPagoDialog(false);
     setPagoInfo(null);
@@ -466,9 +775,12 @@ export function Financeiro() {
   };
 
   const estornarPagamento = async (pagamentoId: string, alunoId: string) => {
-    await supabase.from('pagamentos').update({ status: 'pendente', data_pagamento: null }).eq('id', pagamentoId);
-    const { data } = await supabase.from('alunos').select('mensalidades_pagas').eq('id', alunoId).single();
-    await supabase.from('alunos').update({ mensalidades_pagas: Math.max(0, (data?.mensalidades_pagas || 0) - 1) }).eq('id', alunoId);
+    const pagamento = pagamentos.find(p => p.id === pagamentoId);
+    const vencimento = pagamento?.data_vencimento ? parseDateOnly(pagamento.data_vencimento) : null;
+    const hoje = parseDateOnly(todayDateInput())!;
+    const status = vencimento && vencimento < hoje ? 'atrasado' : 'pendente';
+    await supabase.from('pagamentos').update({ status, data_pagamento: null }).eq('id', pagamentoId);
+    await atualizarContadoresAluno(alunoId);
     toast({ title: 'Estornado!' });
     loadData();
   };
@@ -488,9 +800,9 @@ export function Financeiro() {
 
       {subView === 'alunos' && (
         <>
-          {/* Filtro de período */}
+          {/* Filtro de periodo */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">Período:</span>
+            <span className="text-xs font-medium text-muted-foreground">Periodo:</span>
             {Object.entries(periodoLabel).map(([key, label]) => (
               <button key={key} onClick={() => setPeriodo(key)}
                 className={`px-3 py-1 rounded text-xs font-medium transition-colors ${periodo === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
@@ -515,15 +827,48 @@ export function Financeiro() {
             ))}
           </div>
 
+          {/* Filtros financeiros */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-muted-foreground">Pagamento:</span>
+            {([
+              { key: 'todos', label: 'Todos' },
+              { key: 'boleto', label: 'Boleto' },
+              { key: 'cartao', label: 'Cartao' },
+              { key: 'avista', label: 'A vista' },
+            ] as { key: PaymentFilter; label: string }[]).map(({ key, label }) => (
+              <button key={key} onClick={() => setPaymentFilter(key)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${paymentFilter === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-muted-foreground">Vencimento:</span>
+            {([
+              { key: 'todos', label: 'Todos' },
+              { key: 'vencidos', label: 'Vencidos' },
+              { key: 'hoje', label: 'Hoje' },
+              { key: 'proximos_7', label: '7 dias' },
+              { key: 'proximos_30', label: '30 dias' },
+              { key: 'quitados', label: 'Quitados' },
+            ] as { key: DueFilter; label: string }[]).map(({ key, label }) => (
+              <button key={key} onClick={() => setDueFilter(key)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${dueFilter === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
           {/* Cards resumo */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="p-4 flex items-center gap-3">
               <div className="p-2 bg-green-100 rounded-lg"><DollarSign className="h-4 w-4 text-green-600" /></div>
-              <div><p className="text-xs text-muted-foreground">Recebido — {periodoLabel[periodo]}</p><p className="text-lg font-bold text-green-600">{formatCurrency(receitaMes)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Recebido - {periodoLabel[periodo]}</p><p className="text-lg font-bold text-green-600">{formatCurrency(receitaMes)}</p></div>
             </Card>
             <Card className="p-4 flex items-center gap-3">
               <div className="p-2 bg-blue-100 rounded-lg"><Target className="h-4 w-4 text-blue-600" /></div>
-              <div><p className="text-xs text-muted-foreground">Previsto — {periodoLabel[periodo]}</p><p className="text-lg font-bold text-blue-600">{formatCurrency(previstoMes)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Previsto - {periodoLabel[periodo]}</p><p className="text-lg font-bold text-blue-600">{formatCurrency(previstoMes)}</p></div>
             </Card>
             <Card className="p-4 flex items-center gap-3 border-red-100">
               <div className="p-2 bg-red-100 rounded-lg"><AlertCircle className="h-4 w-4 text-red-600" /></div>
@@ -578,7 +923,7 @@ export function Financeiro() {
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="font-bold flex items-center gap-2">
                         <Building2 className="h-4 w-4 text-primary" />{turmaLabel}
-                        {turma?.valor_mensalidade && <span className="text-xs font-normal text-muted-foreground ml-1">· {formatCurrency(turma.valor_mensalidade)}/mês</span>}
+                        {turma?.valor_mensalidade && <span className="text-xs font-normal text-muted-foreground ml-1">- {formatCurrency(turma.valor_mensalidade)}/mes</span>}
                       </h3>
                       <Badge variant="secondary">{grupo.length} aluno{grupo.length !== 1 ? 's' : ''}</Badge>
                     </div>
@@ -591,43 +936,64 @@ export function Financeiro() {
                             <th className="text-left py-2 px-3 font-medium">Turma</th>
                             <th className="text-left py-2 px-3 font-medium">Pagamento</th>
                             <th className="text-left py-2 px-3 font-medium">Parcelas</th>
+                            <th className="text-left py-2 px-3 font-medium">Prox. venc.</th>
+                            <th className="text-left py-2 px-3 font-medium">Contrato</th>
                             <th className="text-left py-2 px-3 font-medium">Status</th>
-                            <th className="text-left py-2 px-3 font-medium">Ações</th>
+                            <th className="text-left py-2 px-3 font-medium">Acoes</th>
                           </tr>
                         </thead>
                         <tbody>
                           {grupo.map(aluno => {
-                            const total = aluno.total_mensalidades || turma?.total_mensalidades || 15;
-                            const pgBadge: Record<string, string> = { boleto: 'bg-orange-100 text-orange-700', cartao: 'bg-blue-100 text-blue-700', pix: 'bg-green-100 text-green-700' };
-                            const pgLabel: Record<string, string> = { boleto: 'Mensalidade', cartao: 'Cartão', pix: 'À vista' };
+                            const parcelasAluno = filteredPagamentos
+                              .filter(p => p.aluno_id === aluno.id)
+                              .sort((a, b) => (a.numero_parcela || 0) - (b.numero_parcela || 0));
+                            const total = parcelasAluno.length || aluno.total_mensalidades || turma?.total_mensalidades || paymentMethodTotal(aluno.forma_pagamento);
+                            const pagas = parcelasAluno.filter(p => p.status === 'pago').length;
+                            const abertas = parcelasAluno.filter(p => p.status !== 'pago').sort((a, b) => String(a.data_vencimento).localeCompare(String(b.data_vencimento)));
+                            const proximoVencimento = abertas[0]?.data_vencimento;
+                            const method = normalizePaymentMethod(aluno.forma_pagamento);
+                            const pgBadge: Record<PaymentMethod, string> = { boleto: 'bg-orange-100 text-orange-700', cartao: 'bg-blue-100 text-blue-700', avista: 'bg-green-100 text-green-700' };
+
                             const inad = inadimplenciaMap[aluno.id];
+                            const contratoLabel = aluno.contrato_assinado ? 'Assinado' : aluno.contrato_enviado ? 'Enviado' : aluno.forms_respondido ? 'Forms ok' : 'Pendente';
+                            const contratoClass = aluno.contrato_assinado
+                              ? 'bg-green-100 text-green-800'
+                              : aluno.contrato_enviado
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : aluno.forms_respondido
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-gray-100 text-gray-700';
                             return (
                               <tr key={aluno.id} className={`border-b border-border/40 hover:bg-muted/40 ${inad ? 'bg-red-50/40' : ''}`}>
                                 <td className="py-2.5 px-3 font-medium">
                                   <div className="flex items-center gap-1.5">
                                     {aluno.nome}
                                     {aluno.contrato_assinado
-                                      ? <span title="Contrato assinado" className="text-green-600 text-[10px] font-bold">✓</span>
+                                      ? <span title="Contrato assinado" className="text-green-600 text-[10px] font-bold">-</span>
                                       : aluno.contrato_enviado
-                                        ? <span title="Contrato enviado, aguardando assinatura" className="text-yellow-500 text-[10px] font-bold">✉</span>
-                                        : <span title="Sem contrato" className="text-gray-300 text-[10px]">○</span>
+                                        ? <span title="Contrato enviado, aguardando assinatura" className="text-yellow-500 text-[10px] font-bold">-</span>
+                                        : <span title="Sem contrato" className="text-gray-300 text-[10px]">-</span>
                                     }
                                   </div>
                                 </td>
                                 <td className="py-2.5 px-3">
-                                  {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">—</span>}
+                                  {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">-</span>}
                                 </td>
-                                <td className="py-2.5 px-3 text-muted-foreground text-xs">{turma?.nome || '—'}</td>
+                                <td className="py-2.5 px-3 text-muted-foreground text-xs">{turma?.nome || '-'}</td>
                                 <td className="py-2.5 px-3">
-                                  {aluno.forma_pagamento
-                                    ? <Badge className={pgBadge[aluno.forma_pagamento] || 'bg-gray-100 text-gray-700'}>{pgLabel[aluno.forma_pagamento] || aluno.forma_pagamento}</Badge>
-                                    : <span className="text-muted-foreground text-xs">—</span>}
+                                  <Badge className={pgBadge[method]}>{paymentLabels[method]}</Badge>
                                 </td>
                                 <td className="py-2.5 px-3">
                                   <div className="flex items-center gap-2">
-                                    <span>{aluno.mensalidades_pagas ?? 0}/{total}</span>
-                                    <Progress value={((aluno.mensalidades_pagas ?? 0) / total) * 100} className="w-16 h-1.5" />
+                                    <span>{pagas}/{total}</span>
+                                    <Progress value={total ? (pagas / total) * 100 : 0} className="w-16 h-1.5" />
                                   </div>
+                                </td>
+                                <td className="py-2.5 px-3 text-xs text-muted-foreground">
+                                  {proximoVencimento ? safeDate(proximoVencimento) : 'Quitado'}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <Badge className={contratoClass}>{contratoLabel}</Badge>
                                 </td>
                                 <td className="py-2.5 px-3">
                                   <div className="flex flex-col gap-1">
@@ -636,7 +1002,7 @@ export function Financeiro() {
                                     </Badge>
                                     {inad && (
                                       <span className="text-[10px] text-red-600 font-medium leading-tight">
-                                        {inad.parcelasAtrasadas}x · {inad.diasAtraso}d · {formatCurrency(inad.valorEmAtraso)}
+                                        {inad.parcelasAtrasadas}x - {inad.diasAtraso}d - {formatCurrency(inad.valorEmAtraso)}
                                       </span>
                                     )}
                                   </div>
@@ -690,7 +1056,7 @@ export function Financeiro() {
                         {isEditing ? (
                           <>
                             <Button size="sm" onClick={saveInlineTurma} disabled={savingInlineTurma} className="h-7 text-xs bg-primary text-white">{savingInlineTurma ? '...' : 'Salvar'}</Button>
-                            <Button size="sm" variant="ghost" onClick={() => setEditingTurmaCardId(null)} className="h-7 text-xs">✕</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setEditingTurmaCardId(null)} className="h-7 text-xs">x</Button>
                           </>
                         ) : (
                           <>
@@ -703,17 +1069,17 @@ export function Financeiro() {
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       {isEditing ? (
                         <>
-                          <div><label className="text-muted-foreground">Início</label><Input type="date" value={inlineTurmaForm.data_inicio || ''} onChange={e => setInlineTurmaForm(f => ({ ...f, data_inicio: e.target.value }))} className="h-7 mt-0.5 text-xs" /></div>
+                          <div><label className="text-muted-foreground">Inicio</label><Input type="date" value={inlineTurmaForm.data_inicio || ''} onChange={e => setInlineTurmaForm(f => ({ ...f, data_inicio: e.target.value }))} className="h-7 mt-0.5 text-xs" /></div>
                           <div><label className="text-muted-foreground">Fim</label><Input type="date" value={inlineTurmaForm.data_fim || ''} onChange={e => setInlineTurmaForm(f => ({ ...f, data_fim: e.target.value }))} className="h-7 mt-0.5 text-xs" /></div>
                           <div><label className="text-muted-foreground">Mensalidade (R$)</label><Input type="number" step="0.01" value={inlineTurmaForm.valor_mensalidade ?? ''} onChange={e => setInlineTurmaForm(f => ({ ...f, valor_mensalidade: parseFloat(e.target.value) || undefined }))} className="h-7 mt-0.5 text-xs" /></div>
                           <div><label className="text-muted-foreground">Total Parcelas</label><Input type="number" value={inlineTurmaForm.total_mensalidades ?? ''} onChange={e => setInlineTurmaForm(f => ({ ...f, total_mensalidades: parseInt(e.target.value) || undefined }))} className="h-7 mt-0.5 text-xs" /></div>
                         </>
                       ) : (
                         <>
-                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Início:</span> {safeDate(turma.data_inicio) || '—'}</div>
-                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Fim:</span> {safeDate(turma.data_fim) || '—'}</div>
-                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Mensalidade:</span> {turma.valor_mensalidade ? formatCurrency(turma.valor_mensalidade) : '—'}</div>
-                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Parcelas:</span> {turma.total_mensalidades ?? '—'}</div>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Inicio:</span> {safeDate(turma.data_inicio) || '-'}</div>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Fim:</span> {safeDate(turma.data_fim) || '-'}</div>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Mensalidade:</span> {turma.valor_mensalidade ? formatCurrency(turma.valor_mensalidade) : '-'}</div>
+                          <div className="text-muted-foreground"><span className="font-medium text-foreground">Parcelas:</span> {turma.total_mensalidades ?? '-'}</div>
                         </>
                       )}
                     </div>
@@ -722,7 +1088,7 @@ export function Financeiro() {
                         <div>{count} aluno{count !== 1 ? 's' : ''}</div>
                         {receitaTurma > 0 && <div className="text-green-600 font-medium">Recebido: {formatCurrency(receitaTurma)}</div>}
                       </div>
-                      <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => { setSelectedTurmaId(turma.id); setSubView('alunos'); }}>Ver alunos →</Button>
+                      <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => { setSelectedTurmaId(turma.id); setSubView('alunos'); }}>Ver alunos</Button>
                     </div>
                   </Card>
                 );
@@ -747,7 +1113,7 @@ export function Financeiro() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Financeiro</h1>
-            <p className="text-sm text-muted-foreground">Gestão completa de turmas e pagamentos</p>
+            <p className="text-sm text-muted-foreground">Gestao completa de turmas e pagamentos</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setShowTurmaDialog(true)}><Plus className="h-4 w-4 mr-1" />Nova Turma</Button>
@@ -759,7 +1125,7 @@ export function Financeiro() {
       <div className="flex-1 overflow-y-auto p-4 lg:p-6">
         <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v as ProdutoTab); setSubView('alunos'); setSelectedTurmaId('todas'); }}>
           <TabsList className="grid w-full max-w-xs grid-cols-2 mb-4">
-            <TabsTrigger value="psicanalise">Psicanálise</TabsTrigger>
+            <TabsTrigger value="psicanalise">Psicanalise</TabsTrigger>
             <TabsTrigger value="numerologia">Numerologia</TabsTrigger>
           </TabsList>
           <TabsContent value="psicanalise"><ProdutoContent /></TabsContent>
@@ -781,13 +1147,13 @@ export function Financeiro() {
               <Select value={newTurmaForm.produto} onValueChange={v => setNewTurmaForm({ ...newTurmaForm, produto: v as ProdutoTab })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="psicanalise">Psicanálise</SelectItem>
+                  <SelectItem value="psicanalise">Psicanalise</SelectItem>
                   <SelectItem value="numerologia">Numerologia</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-sm font-medium">Data Início</label><Input type="date" value={newTurmaForm.data_inicio} onChange={e => setNewTurmaForm({ ...newTurmaForm, data_inicio: e.target.value })} className="mt-1" /></div>
+              <div><label className="text-sm font-medium">Data Inicio</label><Input type="date" value={newTurmaForm.data_inicio} onChange={e => setNewTurmaForm({ ...newTurmaForm, data_inicio: e.target.value })} className="mt-1" /></div>
               <div><label className="text-sm font-medium">Data Fim</label><Input type="date" value={newTurmaForm.data_fim} onChange={e => setNewTurmaForm({ ...newTurmaForm, data_fim: e.target.value })} className="mt-1" /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -809,7 +1175,7 @@ export function Financeiro() {
           <div className="space-y-3">
             <div><label className="text-sm font-medium">Nome</label><Input value={editTurmaForm.nome || ''} onChange={e => setEditTurmaForm({ ...editTurmaForm, nome: e.target.value })} className="mt-1" /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-sm font-medium">Data Início</label><Input type="date" value={editTurmaForm.data_inicio || ''} onChange={e => setEditTurmaForm({ ...editTurmaForm, data_inicio: e.target.value })} className="mt-1" /></div>
+              <div><label className="text-sm font-medium">Data Inicio</label><Input type="date" value={editTurmaForm.data_inicio || ''} onChange={e => setEditTurmaForm({ ...editTurmaForm, data_inicio: e.target.value })} className="mt-1" /></div>
               <div><label className="text-sm font-medium">Data Fim</label><Input type="date" value={editTurmaForm.data_fim || ''} onChange={e => setEditTurmaForm({ ...editTurmaForm, data_fim: e.target.value })} className="mt-1" /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -826,12 +1192,22 @@ export function Financeiro() {
 
       {/* Modal Adicionar Aluno */}
       <Dialog open={showAlunoDialog} onOpenChange={setShowAlunoDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Adicionar Aluno</DialogTitle><DialogDescription>Adicione um novo aluno à turma</DialogDescription></DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Adicionar Aluno</DialogTitle><DialogDescription>Adicione um novo aluno na turma</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div><label className="text-sm font-medium">Nome *</label><Input value={newAlunoForm.nome} onChange={e => setNewAlunoForm({ ...newAlunoForm, nome: e.target.value })} placeholder="Nome completo" className="mt-1" /></div>
             <div><label className="text-sm font-medium">WhatsApp</label><Input value={newAlunoForm.whatsapp} onChange={e => setNewAlunoForm({ ...newAlunoForm, whatsapp: e.target.value })} placeholder="(11) 99999-9999" className="mt-1" /></div>
             <div><label className="text-sm font-medium">Email</label><Input type="email" value={newAlunoForm.email} onChange={e => setNewAlunoForm({ ...newAlunoForm, email: e.target.value })} placeholder="email@example.com" className="mt-1" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-sm font-medium">CPF</label><Input value={newAlunoForm.cpf} onChange={e => setNewAlunoForm({ ...newAlunoForm, cpf: e.target.value })} placeholder="000.000.000-00" className="mt-1" /></div>
+              <div><label className="text-sm font-medium">Data de nascimento</label><Input type="date" value={newAlunoForm.data_nascimento} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_nascimento: e.target.value })} className="mt-1" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-sm font-medium">Pais</label><Input value={newAlunoForm.pais} onChange={e => setNewAlunoForm({ ...newAlunoForm, pais: e.target.value })} className="mt-1" /></div>
+              <div><label className="text-sm font-medium">CEP</label><Input value={newAlunoForm.cep} onChange={e => setNewAlunoForm({ ...newAlunoForm, cep: e.target.value })} className="mt-1" /></div>
+            </div>
+            <div><label className="text-sm font-medium">Endereco completo</label><Input value={newAlunoForm.endereco} onChange={e => setNewAlunoForm({ ...newAlunoForm, endereco: e.target.value })} className="mt-1" /></div>
+            <div><label className="text-sm font-medium">Cidade / Estado</label><Input value={newAlunoForm.cidade_estado} onChange={e => setNewAlunoForm({ ...newAlunoForm, cidade_estado: e.target.value })} className="mt-1" /></div>
             <div>
               <label className="text-sm font-medium">Turma *</label>
               <Select value={newAlunoForm.turma_id} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, turma_id: v })}>
@@ -840,8 +1216,12 @@ export function Financeiro() {
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-sm font-medium">Data de Matrícula</label><Input type="date" value={newAlunoForm.data_matricula} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_matricula: e.target.value })} className="mt-1" /><p className="text-[10px] text-muted-foreground mt-0.5">Data do 1º pagamento / ato de matrícula</p></div>
-              <div><label className="text-sm font-medium">Data de Início da Turma</label><Input type="date" value={newAlunoForm.data_inicio} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_inicio: e.target.value })} className="mt-1" /></div>
+              <div><label className="text-sm font-medium">Data de Matricula</label><Input type="date" value={newAlunoForm.data_matricula} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_matricula: e.target.value })} className="mt-1" /><p className="text-[10px] text-muted-foreground mt-0.5">Data do 1o pagamento / ato de matricula</p></div>
+              <div><label className="text-sm font-medium">Data de Inicio da Turma</label><Input type="date" value={newAlunoForm.data_inicio} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_inicio: e.target.value })} className="mt-1" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-sm font-medium">Data fim</label><Input type="date" value={newAlunoForm.data_fim} onChange={e => setNewAlunoForm({ ...newAlunoForm, data_fim: e.target.value })} className="mt-1" /></div>
+              <div><label className="text-sm font-medium">Valor personalizado</label><Input type="number" step="0.01" value={newAlunoForm.valor_mensalidade} onChange={e => setNewAlunoForm({ ...newAlunoForm, valor_mensalidade: e.target.value })} placeholder="Vazio = valor da turma" className="mt-1" /></div>
             </div>
             <div>
               <label className="text-sm font-medium">Dia Vencimento</label>
@@ -852,12 +1232,12 @@ export function Financeiro() {
             </div>
             <div>
               <label className="text-sm font-medium">Forma de Pagamento</label>
-              <Select value={newAlunoForm.forma_pagamento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, forma_pagamento: v })}>
+              <Select value={newAlunoForm.forma_pagamento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, forma_pagamento: v as PaymentMethod })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="boleto">Boleto — 15 mensalidades</SelectItem>
-                  <SelectItem value="cartao">Cartão — 12x</SelectItem>
-                  <SelectItem value="pix">PIX — À vista</SelectItem>
+                  <SelectItem value="boleto">Boleto - 15 mensalidades</SelectItem>
+                  <SelectItem value="cartao">Cartao - 12x</SelectItem>
+                  <SelectItem value="avista">A vista - 1/1</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -867,10 +1247,14 @@ export function Financeiro() {
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="direto">Direto</SelectItem>
-                  <SelectItem value="lancamento">Lançamento</SelectItem>
+                  <SelectItem value="lancamento">Lancamento</SelectItem>
                   <SelectItem value="npa">NPA</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Observacoes</label>
+              <Textarea value={newAlunoForm.observacoes} onChange={e => setNewAlunoForm({ ...newAlunoForm, observacoes: e.target.value })} placeholder="Informacoes do contrato, cobranca ou atendimento..." className="mt-1 min-h-16" />
             </div>
           </div>
           <DialogFooter>
@@ -880,126 +1264,193 @@ export function Financeiro() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Detalhe/Edição do Aluno */}
+      {/* Modal Detalhe/Edicao do Aluno */}
       <Dialog open={showAlunoDetail} onOpenChange={setShowAlunoDetail}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Dados do Aluno</DialogTitle><DialogDescription>Visualize e edite as informações do aluno</DialogDescription></DialogHeader>
-          {alunoDetail && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-medium text-muted-foreground uppercase">Nome</label><Input value={editAlunoForm.nome || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, nome: e.target.value })} className="mt-1" /></div>
-                <div><label className="text-xs font-medium text-muted-foreground uppercase">WhatsApp</label><Input value={editAlunoForm.whatsapp || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, whatsapp: e.target.value })} className="mt-1" /></div>
-                <div><label className="text-xs font-medium text-muted-foreground uppercase">Email</label><Input type="email" value={editAlunoForm.email || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, email: e.target.value })} className="mt-1" /></div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Turma</label>
-                  <Select value={editAlunoForm.turma_id || ''} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, turma_id: v })}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>{filteredTurmas.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div><label className="text-xs font-medium text-muted-foreground uppercase">Data de Início</label><Input type="date" value={editAlunoForm.data_inicio || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, data_inicio: e.target.value })} className="mt-1" /></div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Dia Vencimento</label>
-                  <Select value={String(editAlunoForm.dia_vencimento || 10)} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, dia_vencimento: parseInt(v) })}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>{[1,5,10,15,20,25,28].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Status</label>
-                  <Select value={editAlunoForm.status || 'ativo'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, status: v as Aluno['status'] })}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ativo">Ativo</SelectItem>
-                      <SelectItem value="inadimplente">Inadimplente</SelectItem>
-                      <SelectItem value="cancelado">Cancelado</SelectItem>
-                      <SelectItem value="concluido">Concluído</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Origem</label>
-                  <Select value={editAlunoForm.origem_lead || 'direto'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, origem_lead: v })}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="direto">Direto</SelectItem>
-                      <SelectItem value="lancamento">Lançamento</SelectItem>
-                      <SelectItem value="npa">NPA</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div><label className="text-xs font-medium text-muted-foreground uppercase">Mensalidades Pagas</label><Input type="number" value={editAlunoForm.mensalidades_pagas ?? 0} onChange={e => setEditAlunoForm({ ...editAlunoForm, mensalidades_pagas: parseInt(e.target.value) })} className="mt-1" /></div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Valor Personalizado (R$)</label>
-                  <Input type="number" step="0.01" value={editAlunoForm.valor_mensalidade ?? ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, valor_mensalidade: e.target.value ? parseFloat(e.target.value) : undefined })} placeholder={`Padrão da turma`} className="mt-1" />
-                  <p className="text-[10px] text-muted-foreground mt-1">Deixe vazio para usar o valor da turma. Ao salvar, parcelas pendentes serão atualizadas.</p>
-                </div>
-                <div><label className="text-xs font-medium text-muted-foreground uppercase">CPF</label><Input value={editAlunoForm.cpf || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, cpf: e.target.value })} placeholder="000.000.000-00" className="mt-1" /></div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Forma de Pagamento</label>
-                  <Select value={editAlunoForm.forma_pagamento || ''} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, forma_pagamento: v })}>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="boleto">Boleto 1+15</SelectItem>
-                      <SelectItem value="cartao">Cartão 12x</SelectItem>
-                      <SelectItem value="pix">PIX à vista</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Contrato Enviado</label>
-                  <Select value={editAlunoForm.contrato_enviado ? 'sim' : 'nao'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, contrato_enviado: v === 'sim' })}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="nao">Não enviado</SelectItem>
-                      <SelectItem value="sim">Enviado ✉️</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">Status do Contrato</label>
-                  <Select value={editAlunoForm.contrato_assinado ? 'sim' : 'nao'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, contrato_assinado: v === 'sim' })}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="nao">Não assinado</SelectItem>
-                      <SelectItem value="sim">Assinado ✅</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div><label className="text-xs font-medium text-muted-foreground uppercase">Total Parcelas</label><Input type="number" value={editAlunoForm.total_mensalidades ?? ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, total_mensalidades: e.target.value ? parseInt(e.target.value) : undefined })} placeholder="Padrão da turma" className="mt-1" /></div>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase">Observações</label>
-                <textarea value={editAlunoForm.observacoes || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, observacoes: e.target.value })} placeholder="Observações sobre o aluno..." className="mt-1 w-full min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" />
-              </div>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-lg">{alunoDetail?.nome}</DialogTitle>
+            <DialogDescription>Edite os dados e gerencie pagamentos</DialogDescription>
+          </DialogHeader>
+          {alunoDetail && (() => {
+            const parcelas = filteredPagamentos.filter(p => p.aluno_id === alunoDetail.id).sort((a, b) => a.numero_parcela - b.numero_parcela);
+            const pagas = parcelas.filter(p => p.status === 'pago').length;
+            const atrasadas = parcelas.filter(p => p.status === 'atrasado').length;
+            const total = parcelas.length;
+            const turmaAtual = turmas.find(t => t.id === (editAlunoForm.turma_id || alunoDetail.turma_id));
+            const valorEfetivo = editAlunoForm.valor_mensalidade ?? turmaAtual?.valor_mensalidade ?? 0;
+            return (
+              <div className="space-y-5">
 
-              {/* Parcelas */}
-              {(() => {
-                const parcelas = filteredPagamentos.filter(p => p.aluno_id === alunoDetail.id).sort((a, b) => a.numero_parcela - b.numero_parcela);
-                if (parcelas.length === 0) return null;
-                return (
-                  <div>
-                    <h4 className="font-medium text-sm mb-2 pt-2 border-t border-border">Parcelas</h4>
-                    <div className="overflow-x-auto">
+                {/* Contrato */}
+                <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-muted/50 border border-border">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Contrato</span>
+                  <button
+                    onClick={() => setEditAlunoForm(f => ({ ...f, contrato_enviado: !f.contrato_enviado, contrato_enviado_em: !f.contrato_enviado ? (f.contrato_enviado_em || todayDateInput()) : '' }))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${editAlunoForm.contrato_enviado ? 'bg-blue-500 text-white' : 'bg-white border border-border text-muted-foreground'}`}>
+                    Enviado
+                  </button>
+                  <button
+                    onClick={() => setEditAlunoForm(f => ({ ...f, contrato_assinado: !f.contrato_assinado, contrato_assinado_em: !f.contrato_assinado ? (f.contrato_assinado_em || todayDateInput()) : '', contrato_enviado: f.contrato_assinado ? f.contrato_enviado : true, contrato_enviado_em: f.contrato_assinado ? f.contrato_enviado_em : (f.contrato_enviado_em || todayDateInput()) }))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${editAlunoForm.contrato_assinado ? 'bg-green-500 text-white' : 'bg-white border border-border text-muted-foreground'}`}>
+                    Assinado
+                  </button>
+                  <div className="ml-auto flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Status:</span>
+                    <Select value={editAlunoForm.status || 'ativo'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, status: v as Aluno['status'] })}>
+                      <SelectTrigger className="h-7 text-xs w-36"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ativo">Ativo</SelectItem>
+                        <SelectItem value="inadimplente">Inadimplente</SelectItem>
+                        <SelectItem value="cancelado">Cancelado</SelectItem>
+                        <SelectItem value="concluido">Concluido</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 w-full pt-2">
+                    <div className="flex items-center gap-2">
+                      <Switch checked={!!editAlunoForm.forms_respondido} onCheckedChange={checked => setEditAlunoForm(f => ({ ...f, forms_respondido: checked, forms_respondido_em: checked ? (f.forms_respondido_em || todayDateInput()) : '' }))} />
+                      <span className="text-xs font-medium">Forms respondido</span>
+                    </div>
+                    <div><label className="text-xs text-muted-foreground">Data forms</label><Input type="date" value={editAlunoForm.forms_respondido_em || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, forms_respondido_em: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">Contrato enviado em</label><Input type="date" value={editAlunoForm.contrato_enviado_em || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, contrato_enviado_em: e.target.value, contrato_enviado: !!e.target.value || editAlunoForm.contrato_enviado })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">Assinado em</label><Input type="date" value={editAlunoForm.contrato_assinado_em || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, contrato_assinado_em: e.target.value, contrato_assinado: !!e.target.value || editAlunoForm.contrato_assinado })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">ID Autentique</label><Input value={editAlunoForm.autentique_documento_id || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, autentique_documento_id: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div className="lg:col-span-3"><label className="text-xs text-muted-foreground">Link de assinatura</label><Input value={editAlunoForm.autentique_link_assinatura || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, autentique_link_assinatura: e.target.value })} placeholder="https://..." className="mt-1 h-8 text-sm" /></div>
+                  </div>
+                </div>
+
+                {/* Dados pessoais */}
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Dados Pessoais</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><label className="text-xs text-muted-foreground">Nome</label><Input value={editAlunoForm.nome || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, nome: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">WhatsApp</label><Input value={editAlunoForm.whatsapp || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, whatsapp: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">Email</label><Input type="email" value={editAlunoForm.email || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, email: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">CPF</label><Input value={editAlunoForm.cpf || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, cpf: e.target.value })} placeholder="000.000.000-00" className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">Data de nascimento</label><Input type="date" value={editAlunoForm.data_nascimento || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, data_nascimento: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">Pais</label><Input value={editAlunoForm.pais || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, pais: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">CEP</label><Input value={editAlunoForm.cep || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, cep: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div><label className="text-xs text-muted-foreground">Cidade / Estado</label><Input value={editAlunoForm.cidade_estado || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, cidade_estado: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div className="col-span-2"><label className="text-xs text-muted-foreground">Endereco completo</label><Input value={editAlunoForm.endereco || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, endereco: e.target.value })} className="mt-1 h-8 text-sm" /></div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Origem</label>
+                      <Select value={editAlunoForm.origem_lead || 'direto'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, origem_lead: v })}>
+                        <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="direto">Direto</SelectItem>
+                          <SelectItem value="lancamento">Lancamento</SelectItem>
+                          <SelectItem value="npa">NPA</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-xs text-muted-foreground">Observacoes</label>
+                      <Textarea value={editAlunoForm.observacoes || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, observacoes: e.target.value })} placeholder="Observacoes sobre contrato, cobranca ou atendimento..." className="mt-1 min-h-16 text-sm" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Financeiro */}
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Financeiro</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground">Turma</label>
+                      <Select value={editAlunoForm.turma_id || ''} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, turma_id: v })}>
+                        <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>{turmas.filter(t => t.produto === activeTab || t.tipo === activeTab).map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Forma de Pagamento</label>
+                      <Select value={editAlunoForm.forma_pagamento || ''} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, forma_pagamento: v })}>
+                        <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                        <SelectContent>
+                  <SelectItem value="boleto">Boleto - 15 mensalidades</SelectItem>
+                  <SelectItem value="cartao">Cartao - 12x</SelectItem>
+                  <SelectItem value="avista">A vista - 1/1</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Valor mensalidade (R$)</label>
+                      <Input type="number" step="0.01" value={editAlunoForm.valor_mensalidade ?? ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, valor_mensalidade: e.target.value ? parseFloat(e.target.value) : undefined })} placeholder={turmaAtual?.valor_mensalidade ? `Padrao: R$ ${turmaAtual.valor_mensalidade}` : 'Padrao da turma'} className="mt-1 h-8 text-sm" />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Vazio = usa valor da turma. Salvar atualiza parcelas pendentes.</p>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Dia vencimento</label>
+                      <Select value={String(editAlunoForm.dia_vencimento || 10)} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, dia_vencimento: parseInt(v) })}>
+                        <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>{[1,5,10,15,20,25,28].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Ato de matricula / 1a parcela</label>
+                      <Input type="date" value={editAlunoForm.data_matricula || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, data_matricula: e.target.value })} className="mt-1 h-8 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Data de inicio da turma</label>
+                      <Input type="date" value={editAlunoForm.data_inicio || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, data_inicio: e.target.value })} className="mt-1 h-8 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Data fim</label>
+                      <Input type="date" value={editAlunoForm.data_fim || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, data_fim: e.target.value })} className="mt-1 h-8 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Parcelas calculadas</label>
+                      <Input value={`${pagas}/${total || paymentMethodTotal(editAlunoForm.forma_pagamento)}`} readOnly className="mt-1 h-8 text-sm bg-muted/50" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Parcelas */}
+                <div>
+                  <div className="flex items-center justify-between mb-2 pt-1 border-t border-border">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Parcelas - {total > 0 ? `${pagas}/${total} pagas` : 'nenhuma gerada'}
+                      {atrasadas > 0 && <span className="ml-2 text-red-600">- {atrasadas} em atraso</span>}
+                    </p>
+                    {total > 0 && valorEfetivo > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        Total: {formatCurrency(valorEfetivo * total)} - Recebido: {formatCurrency(parcelas.filter(p => p.status === 'pago').reduce((s, p) => s + p.valor, 0))}
+                      </span>
+                    )}
+                  </div>
+                  {total === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">Nenhuma parcela gerada. Adicione o aluno com forma de pagamento para gerar automaticamente.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-md border border-border">
                       <table className="w-full text-sm">
-                        <thead><tr className="border-b border-border text-muted-foreground"><th className="text-left py-1.5 px-2">Nº</th><th className="text-left py-1.5 px-2">Mês</th><th className="text-left py-1.5 px-2">Vencimento</th><th className="text-left py-1.5 px-2">Pago em</th><th className="text-left py-1.5 px-2">Valor</th><th className="text-left py-1.5 px-2">Status</th><th className="text-left py-1.5 px-2">Ação</th></tr></thead>
+                        <thead className="bg-muted/50">
+                          <tr className="border-b border-border text-muted-foreground">
+                            <th className="text-left py-2 px-2 font-medium text-xs">No.</th>
+                            <th className="text-left py-2 px-2 font-medium text-xs">Vencimento</th>
+                            <th className="text-left py-2 px-2 font-medium text-xs">Pago em</th>
+                            <th className="text-left py-2 px-2 font-medium text-xs">Valor</th>
+                            <th className="text-left py-2 px-2 font-medium text-xs">Status</th>
+                            <th className="text-left py-2 px-3 font-medium">Acoes</th>
+                          </tr>
+                        </thead>
                         <tbody>
                           {parcelas.map(p => (
-                            <tr key={p.id} className={`border-b border-border/40 ${p.status === 'atrasado' ? 'bg-red-50' : p.status === 'pago' ? 'bg-green-50' : ''}`}>
-                              <td className="py-2 px-2">{p.numero_parcela}</td>
-                              <td className="py-2 px-2">{p.mes_referencia}</td>
-                              <td className="py-2 px-2">{safeDate(p.data_vencimento)}</td>
-                              <td className="py-2 px-2">{p.data_pagamento ? <span className="text-green-700 font-medium">{safeDate(p.data_pagamento)}</span> : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="py-2 px-2 font-medium">{formatCurrency(p.valor)}</td>
+                            <tr key={p.id} className={`border-b border-border/40 transition-colors ${p.status === 'atrasado' ? 'bg-red-50' : p.status === 'pago' ? 'bg-green-50/60' : 'hover:bg-muted/30'}`}>
+                              <td className="py-2 px-2 font-medium text-xs">{p.numero_parcela}/{total}</td>
+                              <td className="py-2 px-2 text-xs">{safeDate(p.data_vencimento)}</td>
+                              <td className="py-2 px-2 text-xs">
+                                {p.data_pagamento
+                                  ? <span className="text-green-700 font-medium">{safeDate(p.data_pagamento)}</span>
+                                  : <span className="text-muted-foreground">-</span>}
+                              </td>
+                              <td className="py-2 px-2 font-semibold text-xs">{formatCurrency(p.valor)}</td>
                               <td className="py-2 px-2">
-                                <Badge className={p.status === 'pago' ? 'bg-green-100 text-green-800' : p.status === 'atrasado' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}>
-                                  {p.status === 'pago' ? '✓ Pago' : p.status === 'atrasado' ? '⚠ Atrasado' : '⏳ Pendente'}
+                                <Badge className={`text-[10px] px-1.5 py-0.5 ${p.status === 'pago' ? 'bg-green-100 text-green-800' : p.status === 'atrasado' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                  {p.status === 'pago' ? 'Pago' : p.status === 'atrasado' ? 'Atrasado' : 'Pendente'}
                                 </Badge>
                               </td>
                               <td className="py-2 px-2">
                                 {p.status === 'pago'
-                                  ? <Button variant="outline" size="sm" onClick={() => estornarPagamento(p.id, alunoDetail.id)} className="text-orange-600 border-orange-200 h-7 text-xs">Estornar</Button>
-                                  : <Button variant="outline" size="sm" onClick={() => marcarComoPago(p.id, alunoDetail.id)} className="text-green-600 border-green-200 h-7 text-xs">Marcar Pago</Button>
+                                  ? <Button variant="ghost" size="sm" onClick={() => estornarPagamento(p.id, alunoDetail.id)} className="text-orange-500 hover:text-orange-700 h-6 px-2 text-[10px]">Estornar</Button>
+                                  : <Button variant="ghost" size="sm" onClick={() => marcarComoPago(p.id, alunoDetail.id)} className="text-green-600 hover:text-green-800 h-6 px-2 text-[10px] font-semibold">Pago</Button>
                                 }
                               </td>
                             </tr>
@@ -1007,14 +1458,15 @@ export function Financeiro() {
                         </tbody>
                       </table>
                     </div>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
+                  )}
+                </div>
+
+              </div>
+            );
+          })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAlunoDetail(false)}>Fechar</Button>
-            <Button onClick={saveAlunoDetail} disabled={savingAluno} className="bg-primary text-white"><CheckCircle2 className="h-4 w-4 mr-1" />{savingAluno ? 'Salvando...' : 'Salvar Alterações'}</Button>
+            <Button onClick={saveAlunoDetail} disabled={savingAluno} className="bg-primary text-white"><CheckCircle2 className="h-4 w-4 mr-1" />{savingAluno ? 'Salvando...' : 'Salvar Alteracoes'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1034,13 +1486,13 @@ export function Financeiro() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Confirmar Exclusão */}
+      {/* Modal Confirmar Exclusao */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="text-destructive">Confirmar Exclusão</DialogTitle><DialogDescription>Tem certeza que deseja remover <strong>{alunoToDelete?.nome}</strong>? Todos os pagamentos vinculados serão excluídos.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="text-destructive">Confirmar Exclusao</DialogTitle><DialogDescription>Tem certeza que deseja remover <strong>{alunoToDelete?.nome}</strong>? Todos os pagamentos vinculados serao excluidos.</DialogDescription></DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancelar</Button>
-            <Button variant="destructive" onClick={deleteAluno}>Confirmar Exclusão</Button>
+            <Button variant="destructive" onClick={deleteAluno}>Confirmar Exclusao</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
