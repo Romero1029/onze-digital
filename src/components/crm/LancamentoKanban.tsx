@@ -1020,13 +1020,13 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       : (syncGrupoInput.match(/(\d{8,})@s\.whatsapp\.net/g) || []).map(m => m.replace(/@.*/, ''))
         .concat((syncGrupoInput.match(/\d{8,}/g) || []));
     const uniqueRaw = [...new Set(rawNumbers)];
-    // Use a Set of normalized phones AND their last-9-digit suffix for flexible matching
-    const groupPhones = new Set(uniqueRaw.map(normalizePhone));
-    const groupSuffix9 = new Set(uniqueRaw.map(n => normalizePhone(n).slice(-9)));
+    // Compare by last 8 digits (core number without area code or 9-prefix)
+    // WhatsApp stores old 8-digit format; leads may have new 9-digit format
+    const groupSuffix8 = new Set(uniqueRaw.map(n => normalizePhone(n).slice(-8)));
 
     const matchedLeads = leads.filter(lead => {
       const norm = normalizePhone(lead.whatsapp);
-      return groupPhones.has(norm) || groupSuffix9.has(norm.slice(-9));
+      return groupSuffix8.has(norm.slice(-8));
     });
 
     const notFound = uniqueRaw.length - matchedLeads.length;
