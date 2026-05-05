@@ -211,6 +211,8 @@ export function Financeiro() {
   const receitaMes = useMemo(() => filteredPagamentos.filter(p => p.status === 'pago' && periodoFilter(p.data_pagamento)).reduce((s, p) => s + p.valor, 0), [filteredPagamentos, periodo]);
   const previstoMes = useMemo(() => filteredPagamentos.filter(p => periodoFilter(p.data_vencimento)).reduce((s, p) => s + p.valor, 0), [filteredPagamentos, periodo]);
 
+  const inadimplentes = useMemo(() => filteredAlunos.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente'), [filteredAlunos, inadimplenciaMap]);
+  const totalEmAtraso = useMemo(() => Object.values(inadimplenciaMap).reduce((s, v) => s + v.valorEmAtraso, 0), [inadimplenciaMap]);
   const contratosPendentes = useMemo(() => filteredAlunos.filter(a => !a.contrato_assinado && a.status === 'ativo').length, [filteredAlunos]);
 
   // Agrupar alunos por turma
