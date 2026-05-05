@@ -43,39 +43,33 @@ export function CRMLayout() {
 
   // Redireciona para primeira view permitida quando permissões carregam
   useEffect(() => {
-    if (permLoading || initialRedirectDone || user?.tipo === 'admin') {
-      setInitialRedirectDone(true);
-      return;
-    }
+    if (permLoading || initialRedirectDone) return; // aguarda carregar, não roda duas vezes
+
+    if (user?.tipo === 'admin') { setInitialRedirectDone(true); return; }
+
     const redirect = async () => {
       if (permissions.can_view_dashboard) { setInitialRedirectDone(true); return; }
 
-      // Tenta ir para o primeiro lançamento permitido
       if (permissions.can_view_lancamentos) {
         let q = supabase.from('lancamentos').select('id').order('created_at', { ascending: false });
         if (!permissions.can_view_all_lancamentos && permissions.allowed_lancamento_ids.length > 0) {
           q = (q as any).in('id', permissions.allowed_lancamento_ids);
         }
         const { data } = await (q as any).limit(1);
-        if (data && data.length > 0) {
-          setCurrentView(`lancamentos_${data[0].id}` as View);
-          setInitialRedirectDone(true);
-          return;
-        }
+        if (data?.[0]) { setCurrentView(`lancamentos_${data[0].id}` as View); setInitialRedirectDone(true); return; }
       }
 
-      // Fallbacks em ordem
       if (permissions.can_view_pipeline) { setCurrentView('pipeline'); setInitialRedirectDone(true); return; }
+      if (permissions.can_view_financeiro) { setCurrentView('financeiro'); setInitialRedirectDone(true); return; }
+      if (permissions.can_view_chat) { setCurrentView('chat'); setInitialRedirectDone(true); return; }
       if (permissions.can_view_npa) {
         const { data } = await supabase.from('npa_eventos').select('id').order('created_at', { ascending: false }).limit(1);
         if (data?.[0]) { setCurrentView(`npa_${data[0].id}` as View); setInitialRedirectDone(true); return; }
       }
-      if (permissions.can_view_financeiro) { setCurrentView('financeiro'); setInitialRedirectDone(true); return; }
-      if (permissions.can_view_chat) { setCurrentView('chat'); setInitialRedirectDone(true); return; }
       setInitialRedirectDone(true);
     };
     redirect();
-  }, [permLoading]);
+  }, [permLoading, initialRedirectDone]);
 
   const handleAddLead = () => { setEditingLead(null); setIsLeadModalOpen(true); };
   const handleAddFlashLead = () => { setIsFlashLeadModalOpen(true); };
@@ -185,7 +179,14 @@ export function CRMLayout() {
   };
 
   const renderView = () => {
-    if (!isViewAllowed(currentView)) return <Dashboard />;
+    if (permLoading || !initialRedirectDone) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+    if (!isViewAllowed(currentView)) return null;
 
     // Handle dynamic lancamentos
     if (typeof currentView === 'string' && currentView.startsWith('lancamentos_')) {
