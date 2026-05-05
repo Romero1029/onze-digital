@@ -1005,17 +1005,25 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     if (!syncGrupoInput.trim()) return;
     setSyncingGrupo(true);
 
-    // Extract all digit sequences of 8+ chars (phone numbers) from the pasted JSON/text
+    // Normalize phone to last 11 digits (DDD + número), removing country code 55 if present
+    const normalizePhone = (raw: string) => {
+      const digits = raw.replace(/\D/g, '');
+      if ((digits.length === 13 || digits.length === 12) && digits.startsWith('55')) return digits.slice(2);
+      return digits.slice(-11);
+    };
+
+    // Extract all digit sequences of 8+ chars from pasted JSON/text
     const rawNumbers = syncGrupoInput.match(/\d{8,}/g) || [];
-    // Normalize: keep only digits, strip country code leading zeros variants
-    const groupPhones = new Set(rawNumbers.map(n => n.replace(/^0+/, '')));
+    // Use a Set of normalized phones AND their last-9-digit suffix for flexible matching
+    const groupPhones = new Set(rawNumbers.map(normalizePhone));
+    const groupSuffix9 = new Set(rawNumbers.map(n => normalizePhone(n).slice(-9)));
 
     const matchedLeads = leads.filter(lead => {
-      const digits = lead.whatsapp.replace(/\D/g, '').replace(/^0+/, '');
-      return groupPhones.has(digits) || groupPhones.has(digits.slice(-8)) || [...groupPhones].some(p => p.endsWith(digits.slice(-8)));
+      const norm = normalizePhone(lead.whatsapp);
+      return groupPhones.has(norm) || groupSuffix9.has(norm.slice(-9));
     });
 
-    const notFound = groupPhones.size - matchedLeads.length;
+    const notFound = rawNumbers.length - matchedLeads.length;
 
     const BATCH = 100;
     let updated = 0;
