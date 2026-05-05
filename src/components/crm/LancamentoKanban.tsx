@@ -10,11 +10,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
 } from '@/components/ui/dialog';
 import {
   Plus, Search, AlertCircle, Users, Target, DollarSign,
-  Loader2, Power, Trash2, Pencil, TrendingUp, BarChart2
+  Loader2, Power, Trash2, Pencil, TrendingUp, BarChart2,
+  ChevronUp, ChevronDown, Upload, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useKanbanColunas } from './kanban/useKanbanColunas';
@@ -26,7 +27,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ActiveView = 'kanban' | 'metas' | 'relatorio';
+type ActiveView = 'kanban' | 'metas' | 'relatorio' | 'trafego';
 
 interface Launch {
   id: string;
@@ -38,6 +39,9 @@ interface Launch {
   meta_leads?: number;
   meta_matriculas?: number;
   meta_faturamento?: number;
+  meta_campaign_id?: string;
+  meta_ad_account_id?: string;
+  meta_access_token?: string;
 }
 
 interface LaunchLead {
@@ -110,42 +114,20 @@ const LEGACY_FASE_NAMES: Record<string, string> = {
   matricula:         'matricula',
 };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function resolveLegacyFase(fase: string, colunas: KanbanColuna[]): string {
   const target = normColName(LEGACY_FASE_NAMES[fase] ?? fase.replace(/_/g, ' '));
   const col = colunas.find(c => normColName(c.nome) === target || normColName(c.nome).includes(target));
   return col?.id ?? colunas[0].id;
 }
 
-// When fase is an unknown UUID, use boolean flags to find the correct column
-function resolveFaseByFlags(lead: LaunchLead, colunas: KanbanColuna[]): string {
-  const n = (nome: string) => normColName(nome);
-  if (lead.matriculado) {
-    const col = colunas.find(c => n(c.nome).includes('matricul'));
-    if (col) return col.id;
-  }
-  if (lead.follow_up_03) {
-    const col = colunas.find(c => n(c.nome).includes('follow') && n(c.nome).includes('03'));
-    if (col) return col.id;
-  }
-  if (lead.follow_up_02) {
-    const col = colunas.find(c => n(c.nome).includes('follow') && n(c.nome).includes('02'));
-    if (col) return col.id;
-  }
-  if (lead.follow_up_01) {
-    const col = colunas.find(c => n(c.nome).includes('follow') && n(c.nome).includes('01'));
-    if (col) return col.id;
-  }
-  if (lead.grupo_oferta) {
-    const col = colunas.find(c => n(c.nome).includes('grupo') && n(c.nome).includes('oferta'));
-    if (col) return col.id;
-  }
-  if (lead.no_grupo) {
-    const col = colunas.find(c => n(c.nome).includes('grupo') && (n(c.nome).includes('lancamento') || n(c.nome).includes('lançamento')));
-    if (col) return col.id;
-  }
-  return colunas[0].id;
+function findColunaIdByName(colunas: KanbanColuna[], matcher: (normalizedName: string) => boolean): string | null {
+  const coluna = colunas.find(c => matcher(normColName(c.nome)));
+  return coluna?.id ?? null;
+}
+
+function countLeadsByFase(leads: LaunchLead[], colunaId: string | null, fallback?: (lead: LaunchLead) => boolean) {
+  if (colunaId) return leads.filter(lead => lead.fase === colunaId).length;
+  return fallback ? leads.filter(fallback).length : 0;
 }
 
 // ─── MetaBar ──────────────────────────────────────────────────────────────────
@@ -286,11 +268,11 @@ function RelatorioTab({ lancamento, leads }: { lancamento: Launch; leads: Launch
   const valorMatricula = Number(lancamento.valor_matricula) || VALOR_MATRICULA_PADRAO;
 
   const totalLeads = leads.length;
-  const grupoLancamento = leads.filter(l => l.no_grupo).length;
-  const grupoOferta = leads.filter(l => l.grupo_oferta).length;
-  const follow1 = leads.filter(l => l.follow_up_01).length;
-  const follow2 = leads.filter(l => l.follow_up_02).length;
-  const follow3 = leads.filter(l => l.follow_up_03).length;
+  const grupoLancamento = leads.filter(l => l.no_grupo && !l.grupo_oferta && !l.follow_up_01 && !l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const grupoOferta = leads.filter(l => l.grupo_oferta && !l.follow_up_01 && !l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const follow1 = leads.filter(l => l.follow_up_01 && !l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const follow2 = leads.filter(l => l.follow_up_02 && !l.follow_up_03 && !l.matriculado).length;
+  const follow3 = leads.filter(l => l.follow_up_03 && !l.matriculado).length;
   const matriculas = leads.filter(l => l.matriculado).length;
   const receitaReal = matriculas * valorMatricula;
 
@@ -362,6 +344,338 @@ function RelatorioTab({ lancamento, leads }: { lancamento: Launch; leads: Launch
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+// ─── Trafego: Types & Constants ──────────────────────────────────────────────
+
+const DATE_PRESETS = [
+  { value: 'today', label: 'Hoje' },
+  { value: 'yesterday', label: 'Ontem' },
+  { value: 'last_7d', label: 'Últimos 7 dias' },
+  { value: 'last_30d', label: 'Últimos 30 dias' },
+  { value: 'this_month', label: 'Este mês' },
+];
+
+interface MetaInsights {
+  spend: string; impressions: string; reach: string; clicks: string;
+  cpm: string; cpc: string; ctr: string; leads: number; cpl: number;
+}
+
+interface Campanha {
+  id: string;
+  lancamento_id: string;
+  nome: string;
+  meta_campaign_id: string;
+  meta_ad_account_id: string;
+  meta_access_token: string;
+  ordem: number;
+}
+
+// ─── CampanhaBlock ────────────────────────────────────────────────────────────
+
+function CampanhaBlock({ campanha, leads, usdToBrl, datePreset, onUpdate, onDelete, onMoveUp, onMoveDown, canMoveUp, canMoveDown }: {
+  campanha: Campanha; leads: LaunchLead[]; usdToBrl: number; datePreset: string;
+  onUpdate: (id: string, data: Partial<Campanha>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onMoveUp: (id: string) => void; onMoveDown: (id: string) => void;
+  canMoveUp: boolean; canMoveDown: boolean;
+}) {
+  const [editingConfig, setEditingConfig] = useState(!campanha.meta_campaign_id);
+  const [editingName, setEditingName] = useState(false);
+  const [form, setForm] = useState({
+    nome: campanha.nome,
+    meta_campaign_id: campanha.meta_campaign_id || '',
+    meta_ad_account_id: campanha.meta_ad_account_id || '',
+    meta_access_token: campanha.meta_access_token || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [insights, setInsights] = useState<MetaInsights | null>(null);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [usdCurrency, setUsdCurrency] = useState(false);
+
+  const configured = !!campanha.meta_campaign_id && !!campanha.meta_access_token;
+
+  const fetchInsights = async () => {
+    if (!campanha.meta_campaign_id || !campanha.meta_access_token) return;
+    setLoadingInsights(true); setError(null);
+    try {
+      const fields = 'spend,impressions,reach,clicks,cpm,cpc,ctr,actions';
+      const url = `https://graph.facebook.com/v19.0/${campanha.meta_campaign_id}/insights?fields=${fields}&date_preset=${datePreset}&access_token=${campanha.meta_access_token}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.error) { setError(json.error.message); return; }
+      const d = json.data?.[0];
+      if (!d) { setInsights(null); return; }
+      const leadAction = d.actions?.find((a: any) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
+      const leadsCount = leadAction ? parseFloat(leadAction.value) : 0;
+      const spend = parseFloat(d.spend || '0');
+      setUsdCurrency(true);
+      setInsights({ spend: d.spend || '0', impressions: d.impressions || '0', reach: d.reach || '0', clicks: d.clicks || '0', cpm: d.cpm || '0', cpc: d.cpc || '0', ctr: d.ctr || '0', leads: leadsCount, cpl: leadsCount > 0 ? spend / leadsCount : 0 });
+    } catch (e: any) { setError(e.message); }
+    finally { setLoadingInsights(false); }
+  };
+
+  useEffect(() => { if (configured) fetchInsights(); }, [campanha.meta_campaign_id, campanha.meta_access_token, datePreset]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onUpdate(campanha.id, { nome: form.nome, meta_campaign_id: form.meta_campaign_id, meta_ad_account_id: form.meta_ad_account_id, meta_access_token: form.meta_access_token });
+    setEditingConfig(false);
+    setSaving(false);
+  };
+
+  const conv = (v: number) => usdCurrency ? v * usdToBrl : v;
+  const fmt = (v: number) => conv(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtInt = (v: string) => parseInt(v).toLocaleString('pt-BR');
+
+  return (
+    <div className="border border-border rounded-xl bg-white overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 border-b border-border">
+        <div className="flex flex-col gap-0.5">
+          <button onClick={() => onMoveUp(campanha.id)} disabled={!canMoveUp} className="p-0.5 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+            <ChevronUp className="h-3 w-3" />
+          </button>
+          <button onClick={() => onMoveDown(campanha.id)} disabled={!canMoveDown} className="p-0.5 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </div>
+
+        {editingName ? (
+          <input autoFocus className="text-sm font-semibold bg-white border border-border rounded px-2 py-0.5 flex-1 max-w-[200px]"
+            value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))}
+            onBlur={async () => { setEditingName(false); await onUpdate(campanha.id, { nome: form.nome }); }}
+            onKeyDown={e => { if (e.key === 'Enter') { setEditingName(false); onUpdate(campanha.id, { nome: form.nome }); } }} />
+        ) : (
+          <button onClick={() => setEditingName(true)} className="text-sm font-semibold flex items-center gap-1 hover:text-primary">
+            {campanha.nome} <Pencil className="h-3 w-3 opacity-40" />
+          </button>
+        )}
+
+        <div className="flex-1" />
+        <button onClick={() => setEditingConfig(e => !e)} className="text-xs text-primary hover:underline flex items-center gap-1">
+          <Pencil className="h-3 w-3" /> {editingConfig ? 'Cancelar' : 'Configurar'}
+        </button>
+        <button onClick={() => onDelete(campanha.id)} className="text-xs text-destructive hover:underline flex items-center gap-1 ml-2">
+          <Trash2 className="h-3 w-3" /> Remover
+        </button>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {editingConfig && (
+          <div className="bg-muted/20 border border-border rounded-lg p-4 space-y-3">
+            <p className="text-xs text-muted-foreground">Vincule a campanha do Meta Ads:</p>
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label className="text-xs font-medium">ID da Campanha</label>
+                <Input placeholder="ex: 120202XXXXXXXXX" value={form.meta_campaign_id} onChange={e => setForm(f => ({ ...f, meta_campaign_id: e.target.value }))} className="mt-1 text-sm" />
+                <p className="text-[10px] text-muted-foreground mt-1">Gerenciador de Anúncios → campanha → número na URL</p>
+              </div>
+              <div>
+                <label className="text-xs font-medium">ID da Conta de Anúncios</label>
+                <Input placeholder="ex: act_XXXXXXXXXX" value={form.meta_ad_account_id} onChange={e => setForm(f => ({ ...f, meta_ad_account_id: e.target.value }))} className="mt-1 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-medium">Token de Acesso</label>
+                <Input type="password" placeholder="Token do Usuário do Sistema Meta" value={form.meta_access_token} onChange={e => setForm(f => ({ ...f, meta_access_token: e.target.value }))} className="mt-1 text-sm" />
+                <p className="text-[10px] text-muted-foreground mt-1">Business Manager → Configurações → Usuários do Sistema → Gerar token (permissão: ads_read)</p>
+              </div>
+            </div>
+            <Button onClick={handleSave} disabled={saving} size="sm" className="bg-primary hover:bg-primary/90 text-white">
+              {saving ? 'Salvando...' : 'Salvar configuração'}
+            </Button>
+          </div>
+        )}
+
+        {!configured && !editingConfig && (
+          <div className="text-center py-8 text-muted-foreground">
+            <BarChart2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">Nenhuma campanha vinculada.</p>
+            <button onClick={() => setEditingConfig(true)} className="text-primary text-sm hover:underline mt-1">Configurar agora</button>
+          </div>
+        )}
+
+        {configured && !editingConfig && (
+          <div className="space-y-3">
+            {usdCurrency && usdToBrl > 1 && <p className="text-[10px] text-muted-foreground">Valores convertidos de USD → BRL (cotação: R$ {usdToBrl.toFixed(2)})</p>}
+            {loadingInsights && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando métricas...</div>}
+            {error && <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-lg">Erro: {error}</div>}
+            {insights && !loadingInsights && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Gasto Total</p><p className="text-xl font-bold mt-1">R$ {fmt(parseFloat(insights.spend))}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Leads Gerados</p><p className="text-xl font-bold text-primary mt-1">{insights.leads.toLocaleString('pt-BR')}</p><p className="text-[10px] text-muted-foreground">{leads.length} no CRM</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CPL</p><p className="text-xl font-bold mt-1">R$ {fmt(insights.cpl)}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Alcance</p><p className="text-xl font-bold mt-1">{fmtInt(insights.reach)}</p><p className="text-[10px] text-muted-foreground">{fmtInt(insights.impressions)} impressões</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CTR</p><p className="text-xl font-bold mt-1">{parseFloat(insights.ctr).toFixed(2)}%</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CPC</p><p className="text-xl font-bold mt-1">R$ {fmt(parseFloat(insights.cpc))}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">CPM</p><p className="text-xl font-bold mt-1">R$ {fmt(parseFloat(insights.cpm))}</p></div>
+                <div className="bg-muted/20 border border-border rounded-lg p-3"><p className="text-xs text-muted-foreground">Cliques</p><p className="text-xl font-bold mt-1">{fmtInt(insights.clicks)}</p></div>
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <p className="text-[10px] text-muted-foreground">ID: <span className="font-mono">{campanha.meta_campaign_id}</span></p>
+              <button onClick={fetchInsights} className="text-xs text-primary hover:underline flex items-center gap-1"><TrendingUp className="h-3 w-3" /> Atualizar</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── TrafegoTab ───────────────────────────────────────────────────────────────
+
+function TrafegoTab({ lancamento, leads: crmLeads }: {
+  lancamento: Launch;
+  leads: LaunchLead[];
+}) {
+  const [campanhas, setCampanhas] = useState<Campanha[]>([]);
+  const [datePreset, setDatePreset] = useState('this_month');
+  const [usdToBrl, setUsdToBrl] = useState<number>(1);
+  const [loadingCampanhas, setLoadingCampanhas] = useState(true);
+  const [addingCampanha, setAddingCampanha] = useState(false);
+
+  useEffect(() => {
+    fetch('https://economia.awesomeapi.com.br/last/USD-BRL')
+      .then(r => r.json())
+      .then(d => { const rate = parseFloat(d.USDBRL?.bid); if (rate) setUsdToBrl(rate); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoadingCampanhas(true);
+      const { data } = await supabase.from('lancamento_campanhas').select('*').eq('lancamento_id', lancamento.id).order('ordem', { ascending: true });
+      setCampanhas((data || []) as Campanha[]);
+      setLoadingCampanhas(false);
+    };
+    load();
+  }, [lancamento.id]);
+
+  const handleAddCampanha = async () => {
+    setAddingCampanha(true);
+    const nextOrdem = campanhas.length > 0 ? Math.max(...campanhas.map(c => c.ordem)) + 1 : 0;
+    const { data, error } = await supabase.from('lancamento_campanhas').insert({ lancamento_id: lancamento.id, nome: `Campanha ${campanhas.length + 1}`, ordem: nextOrdem }).select().single();
+    if (!error && data) { setCampanhas(prev => [...prev, data as Campanha]); toast.success('Campanha criada!'); }
+    setAddingCampanha(false);
+  };
+
+  const handleUpdate = async (id: string, data: Partial<Campanha>) => {
+    const { error } = await supabase.from('lancamento_campanhas').update(data as any).eq('id', id);
+    if (error) { toast.error('Erro ao salvar'); return; }
+    setCampanhas(prev => prev.map(c => c.id === id ? { ...c, ...data } : c));
+    toast.success('Salvo!');
+  };
+
+  const handleDelete = async (id: string) => {
+    const { error } = await supabase.from('lancamento_campanhas').delete().eq('id', id);
+    if (error) { toast.error('Erro ao remover'); return; }
+    setCampanhas(prev => prev.filter(c => c.id !== id));
+    toast.success('Campanha removida!');
+  };
+
+  const handleMove = (id: string, dir: 'up' | 'down') => {
+    const idx = campanhas.findIndex(c => c.id === id);
+    if ((dir === 'up' && idx === 0) || (dir === 'down' && idx === campanhas.length - 1)) return;
+    const newList = [...campanhas];
+    const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
+    [newList[idx], newList[swapIdx]] = [newList[swapIdx], newList[idx]];
+    const updated = newList.map((c, i) => ({ ...c, ordem: i }));
+    setCampanhas(updated);
+    Promise.all(updated.map(c => supabase.from('lancamento_campanhas').update({ ordem: c.ordem }).eq('id', c.id)));
+  };
+
+  const hasConfigured = campanhas.some(c => c.meta_campaign_id && c.meta_access_token);
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-base flex items-center gap-2">
+          <BarChart2 className="h-4 w-4 text-primary" /> Gestão de Tráfego — Meta Ads
+        </h3>
+        <Button onClick={handleAddCampanha} disabled={addingCampanha} size="sm" className="bg-primary hover:bg-primary/90 text-white gap-1">
+          <Plus className="h-3 w-3" /> {addingCampanha ? 'Criando...' : 'Nova Campanha'}
+        </Button>
+      </div>
+
+      {hasConfigured && (
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">Período:</span>
+          <div className="flex gap-1 flex-wrap">
+            {DATE_PRESETS.map(p => (
+              <button key={p.value} onClick={() => setDatePreset(p.value)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${datePreset === p.value ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {loadingCampanhas && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando campanhas...</div>}
+
+      {!loadingCampanhas && campanhas.length === 0 && (
+        <div className="text-center py-16 text-muted-foreground border border-dashed border-border rounded-xl">
+          <BarChart2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">Nenhuma campanha criada ainda.</p>
+          <button onClick={handleAddCampanha} className="text-primary text-sm hover:underline mt-2 flex items-center gap-1 mx-auto">
+            <Plus className="h-3 w-3" /> Criar primeira campanha
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {campanhas.map((campanha, idx) => (
+          <CampanhaBlock key={campanha.id} campanha={campanha} leads={crmLeads} usdToBrl={usdToBrl} datePreset={datePreset}
+            onUpdate={handleUpdate} onDelete={handleDelete}
+            onMoveUp={(id) => handleMove(id, 'up')} onMoveDown={(id) => handleMove(id, 'down')}
+            canMoveUp={idx > 0} canMoveDown={idx < campanhas.length - 1} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── CSV Import Helpers ────────────────────────────────────────────────────────
+
+function parseCSV(text: string): { headers: string[]; rows: string[][] } {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return { headers: [], rows: [] };
+  const first = lines[0];
+  const tabs = (first.match(/\t/g) || []).length;
+  const semis = (first.match(/;/g) || []).length;
+  const commas = (first.match(/,/g) || []).length;
+  const sep = tabs >= semis && tabs >= commas ? '\t' : semis >= commas ? ';' : ',';
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+      else if (ch === sep && !inQ) { result.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    result.push(cur.trim());
+    return result;
+  };
+  const headers = parseLine(lines[0]).map(h => h.replace(/^"|"$/g, '').toLowerCase().trim());
+  const rows = lines.slice(1).map(parseLine).filter(r => r.some(c => c.trim()));
+  return { headers, rows };
+}
+
+function autoDetectMapping(headers: string[]): { nome: string; whatsapp: string; email: string } {
+  const find = (...patterns: RegExp[]) => {
+    const idx = headers.findIndex(h => patterns.some(p => p.test(h)));
+    return idx >= 0 ? String(idx) : '';
+  };
+  return {
+    nome: find(/^nome$/i, /^name$/i, /nome.+completo/i, /^nome/i, /^lead/i),
+    whatsapp: find(/whatsapp/i, /celular/i, /telefone/i, /^phone/i, /^tel$/i, /^fone$/i, /^contato/i),
+    email: find(/^e?-?mail$/i, /^email/i),
+  };
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────────
+
 export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const { user, users } = useAuth();
   const navigate = useNavigate();
@@ -371,13 +685,19 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const [loading, setLoading] = useState(true);
   const [activeView, setActiveView] = useState<ActiveView>('kanban');
   const [isAddingLead, setIsAddingLead] = useState(false);
+  const [showAddLeadDialog, setShowAddLeadDialog] = useState(false);
   const [newLeadForm, setNewLeadForm] = useState({ nome: '', whatsapp: '', email: '' });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState<LaunchLead | null>(null);
   const [editingLead, setEditingLead] = useState<LaunchLead | null>(null);
-  const [editLeadForm, setEditLeadForm] = useState({ nome: '', whatsapp: '', email: '', observacoes: '' });
+  const [editLeadForm, setEditLeadForm] = useState({ nome: '', whatsapp: '', email: '', observacoes: '', matriculado: false });
   const [editingValor, setEditingValor] = useState(false);
   const [valorInput, setValorInput] = useState('');
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importParsed, setImportParsed] = useState<{ headers: string[]; rows: string[][] } | null>(null);
+  const [importMapping, setImportMapping] = useState({ nome: '', whatsapp: '', email: '' });
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ inserted: number; dupes: number } | null>(null);
 
   // Column management
   const [renamingColuna, setRenamingColuna] = useState<KanbanColuna | null>(null);
@@ -417,6 +737,14 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     return all;
   };
 
+  const normalizeLeadsToCurrentColunas = useCallback(
+    async (loadedLeads: LaunchLead[]) => {
+      if (colunasRef.current.length === 0) return loadedLeads;
+      return migrateLegacyLeads(loadedLeads, colunasRef.current);
+    },
+    [],
+  );
+
   // ── Fetch lancamento + leads ────────────────────────────────────────────────
   useEffect(() => {
     if (!lancamentoId) return;
@@ -428,20 +756,27 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         .select('*')
         .eq('id', lancamentoId)
         .single();
-      if (lancData) setLancamento(lancData as Launch);
+      if (lancData) {
+        const lsKey = `trafego_config_${lancamentoId}`;
+        const lsConfig = localStorage.getItem(lsKey);
+        // Only use localStorage if Supabase doesn't have the config yet (migration not applied)
+        let merged = { ...lancData };
+        if (lsConfig && !lancData.meta_campaign_id) {
+          Object.assign(merged, JSON.parse(lsConfig));
+        } else if (lancData.meta_campaign_id) {
+          localStorage.removeItem(lsKey);
+        }
+        setLancamento(merged as Launch);
+      }
 
       let loadedLeads = (await fetchAllLeads(lancamentoId)) as LaunchLead[];
-
-      // Migrate legacy string fase values once columns are loaded
-      if (colunasRef.current.length > 0) {
-        loadedLeads = await migrateLegacyLeads(loadedLeads, colunasRef.current);
-      }
+      loadedLeads = await normalizeLeadsToCurrentColunas(loadedLeads);
 
       setLeads(loadedLeads);
       setLoading(false);
     };
     load();
-  }, [lancamentoId]);
+  }, [lancamentoId, normalizeLeadsToCurrentColunas]);
 
   // ── Auto-migration: fix leads with legacy string fase ──────────────────────
   const migrateLegacyLeads = async (
@@ -454,10 +789,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
     const migrated = loadedLeads.map(lead => {
       if (validIds.has(lead.fase)) return lead;
-      // Unknown UUID → use boolean flags; legacy string → use name mapping
-      const newFase = UUID_RE.test(lead.fase)
-        ? resolveFaseByFlags(lead, cols)
-        : resolveLegacyFase(lead.fase, cols);
+      const newFase = resolveLegacyFase(lead.fase, cols);
       return { ...lead, fase: newFase };
     });
 
@@ -485,17 +817,19 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     const load = async () => {
       // reload leads only (columns are static within a session)
       const data = await fetchAllLeads(lancamentoId);
-      setLeads(data as LaunchLead[]);
+      const normalized = await normalizeLeadsToCurrentColunas(data as LaunchLead[]);
+      setLeads(normalized);
     };
 
     const channel = supabase
       .channel(`launch-leads-${lancamentoId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'lancamento_leads' },
+        { event: '*', schema: 'public', table: 'lancamento_leads', filter: `lancamento_id=eq.${lancamentoId}` },
         (payload) => {
           if (payload.eventType === 'INSERT') {
-            setLeads(prev => [payload.new as LaunchLead, ...prev]);
+            const newLead = payload.new as LaunchLead;
+            setLeads(prev => prev.some(l => l.id === newLead.id) ? prev : [newLead, ...prev]);
           } else if (payload.eventType === 'UPDATE') {
             const updated = payload.new as LaunchLead;
             setLeads(prev =>
@@ -514,7 +848,28 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [lancamentoId]);
+  }, [lancamentoId, normalizeLeadsToCurrentColunas]);
+
+  useEffect(() => {
+    if (colunas.length === 0 || leadsRef.current.length === 0) return;
+
+    const validIds = new Set(colunas.map(coluna => coluna.id));
+    const hasLegacyPhase = leadsRef.current.some(lead => !validIds.has(lead.fase));
+    if (!hasLegacyPhase) return;
+
+    let cancelled = false;
+
+    const syncLeads = async () => {
+      const normalized = await migrateLegacyLeads(leadsRef.current, colunas);
+      if (!cancelled) setLeads(normalized);
+    };
+
+    syncLeads();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [colunas]);
 
   // ── Move lead ───────────────────────────────────────────────────────────────
   const handleMoveLead = useCallback(async (leadId: string, colunaId: string) => {
@@ -550,20 +905,94 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     const primeiraColuna = colunasRef.current[0];
     if (!primeiraColuna) { toast.error('Nenhuma coluna encontrada'); return; }
     setIsAddingLead(true);
-    const { error } = await supabase.from('lancamento_leads').insert({
+    const { data: inserted, error } = await supabase.from('lancamento_leads').insert({
       lancamento_id: lancamentoId,
       nome: newLeadForm.nome,
       whatsapp: newLeadForm.whatsapp,
       email: newLeadForm.email || null,
-      fase: primeiraColuna.id,  // always UUID
+      fase: primeiraColuna.id,
       no_grupo: false,
       grupo_oferta: false,
       matriculado: false,
       responsavel_id: vinicius?.id,
       created_at: new Date().toISOString(),
-    });
-    if (!error) setNewLeadForm({ nome: '', whatsapp: '', email: '' });
+    }).select('*').single();
     setIsAddingLead(false);
+    if (error) { toast.error('Erro ao adicionar lead: ' + error.message); return; }
+    if (inserted) setLeads(prev => [inserted as LaunchLead, ...prev]);
+    setNewLeadForm({ nome: '', whatsapp: '', email: '' });
+    setShowAddLeadDialog(false);
+    toast.success('Lead adicionado!');
+  };
+
+  // ── CSV Import ─────────────────────────────────────────────────────────────
+  const handleFileSelect = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const parsed = parseCSV(text);
+      if (parsed.headers.length === 0) { toast.error('Arquivo inválido ou vazio'); return; }
+      const mapping = autoDetectMapping(parsed.headers);
+      setImportParsed(parsed);
+      setImportMapping(mapping);
+      setImportResult(null);
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleDoImport = async () => {
+    if (!importParsed || !importMapping.nome || !importMapping.whatsapp) return;
+    const primeiraColuna = colunasRef.current[0];
+    if (!primeiraColuna) { toast.error('Nenhuma coluna encontrada'); return; }
+    setImporting(true);
+
+    const nomeIdx = Number(importMapping.nome);
+    const waIdx = Number(importMapping.whatsapp);
+    const emailIdx = importMapping.email !== '' ? Number(importMapping.email) : -1;
+
+    const existingWas = new Set(leads.map(l => l.whatsapp.replace(/\D/g, '')));
+
+    const toInsert = importParsed.rows
+      .map(row => ({
+        nome: row[nomeIdx]?.trim() || '',
+        whatsapp: row[waIdx]?.trim() || '',
+        email: emailIdx >= 0 ? row[emailIdx]?.trim() || null : null,
+      }))
+      .filter(r => r.nome && r.whatsapp);
+
+    const dupes = toInsert.filter(r => existingWas.has(r.whatsapp.replace(/\D/g, ''))).length;
+    const fresh = toInsert.filter(r => !existingWas.has(r.whatsapp.replace(/\D/g, '')));
+
+    const BATCH = 100;
+    let inserted = 0;
+    for (let i = 0; i < fresh.length; i += BATCH) {
+      const batch = fresh.slice(i, i + BATCH).map(r => ({
+        lancamento_id: lancamentoId,
+        nome: r.nome,
+        whatsapp: r.whatsapp,
+        email: r.email || null,
+        fase: primeiraColuna.id,
+        no_grupo: false,
+        grupo_oferta: false,
+        follow_up_01: false,
+        follow_up_02: false,
+        follow_up_03: false,
+        matriculado: false,
+        responsavel_id: vinicius?.id || null,
+      }));
+      const { error } = await supabase.from('lancamento_leads').insert(batch);
+      if (error) { toast.error('Erro ao importar: ' + error.message); break; }
+      inserted += batch.length;
+    }
+
+    setImporting(false);
+    setImportResult({ inserted, dupes });
+    if (inserted > 0) {
+      const newLeads = await fetchAllLeads(lancamentoId) as LaunchLead[];
+      const normalized = await normalizeLeadsToCurrentColunas(newLeads);
+      setLeads(normalized);
+      toast.success(`${inserted} leads importados!`);
+    }
   };
 
   // ── Toggle active ───────────────────────────────────────────────────────────
@@ -638,6 +1067,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       whatsapp: lead.whatsapp,
       email: lead.email ?? '',
       observacoes: lead.observacoes ?? '',
+      matriculado: lead.matriculado,
     });
   };
 
@@ -650,6 +1080,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
         whatsapp: editLeadForm.whatsapp,
         email: editLeadForm.email || null,
         observacoes: editLeadForm.observacoes || null,
+        matriculado: editLeadForm.matriculado,
       })
       .eq('id', editingLead.id);
     if (error) { toast.error('Erro ao salvar lead'); return; }
@@ -673,9 +1104,12 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   // ── Derived metrics ─────────────────────────────────────────────────────────
   const valorMatricula = Number(lancamento?.valor_matricula) || VALOR_MATRICULA_PADRAO;
   const totalLeads = leads.length;
-  const grupoLancamento = leads.filter(l => l.no_grupo).length;
-  const grupoOferta = leads.filter(l => l.grupo_oferta).length;
-  const matriculas = leads.filter(l => l.matriculado).length;
+  const grupoLancamentoColunaId = findColunaIdByName(colunas, nome => nome === 'grupo_lancamento');
+  const grupoOfertaColunaId = findColunaIdByName(colunas, nome => nome === 'grupo_oferta');
+  const matriculaColunaId = findColunaIdByName(colunas, nome => nome.includes('matricul'));
+  const grupoLancamento = countLeadsByFase(leads, grupoLancamentoColunaId, lead => lead.no_grupo && !lead.grupo_oferta && !lead.follow_up_01 && !lead.follow_up_02 && !lead.follow_up_03 && !lead.matriculado);
+  const grupoOferta = countLeadsByFase(leads, grupoOfertaColunaId, lead => lead.grupo_oferta && !lead.follow_up_01 && !lead.follow_up_02 && !lead.follow_up_03 && !lead.matriculado);
+  const matriculas = countLeadsByFase(leads, matriculaColunaId, lead => lead.matriculado);
   const receitaMatriculas = matriculas * valorMatricula;
 
   // ── Filter ──────────────────────────────────────────────────────────────────
@@ -782,6 +1216,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
           { id: 'kanban', label: 'Kanban' },
           { id: 'metas', label: 'Metas' },
           { id: 'relatorio', label: 'Relatório' },
+          { id: 'trafego', label: '📊 Tráfego' },
         ] as { id: ActiveView; label: string }[]).map(tab => (
           <button
             key={tab.id}
@@ -800,6 +1235,11 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
       {/* ── Metas Tab ── */}
       {activeView === 'metas' && (
         <MetaTab lancamento={lancamento} leads={leads} onSave={handleSaveMetas} />
+      )}
+
+      {/* ── Tráfego Tab ── */}
+      {activeView === 'trafego' && (
+        <TrafegoTab lancamento={lancamento} leads={leads} />
       )}
 
       {/* ── Relatorio Tab ── */}
@@ -821,46 +1261,60 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                 className="pl-10"
               />
             </div>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="default" className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Adicionar Lead
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Adicionar Lead</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <input
-                    placeholder="Nome"
-                    value={newLeadForm.nome}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, nome: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                  <input
-                    placeholder="WhatsApp"
-                    value={newLeadForm.whatsapp}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, whatsapp: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                  <input
-                    placeholder="Email (opcional)"
-                    value={newLeadForm.email}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, email: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  />
-                  <Button onClick={handleAddLead} disabled={isAddingLead} className="w-full">
-                    {isAddingLead ? 'Adicionando...' : 'Adicionar'}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+            <Button variant="outline" className="gap-2" onClick={() => { setShowImportModal(true); setImportParsed(null); setImportResult(null); }}>
+              <Upload className="h-4 w-4" />
+              Importar CSV
+            </Button>
+            <Button variant="default" className="gap-2" onClick={() => setShowAddLeadDialog(true)}>
+              <Plus className="h-4 w-4" />
+              Adicionar Lead
+            </Button>
           </div>
 
+          {/* Search Results (flat list) */}
+          {searchQuery && (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">{filteredLeads.length} resultado(s) para "{searchQuery}"</p>
+              {filteredLeads.length === 0 && (
+                <div className="text-center py-10 text-muted-foreground border border-dashed border-border rounded-lg">
+                  Nenhum lead encontrado.
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {filteredLeads.map(lead => {
+                  return (
+                    <div key={lead.id} className={`p-3 rounded-lg border ${lead.matriculado ? 'bg-green-50 border-green-200' : 'bg-white border-border'} shadow-sm`}>
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <span className="font-medium text-sm flex-1">{lead.nome}</span>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button onClick={() => handleOpenEditLead(lead)} className="text-muted-foreground hover:text-foreground"><Pencil className="h-3 w-3" /></button>
+                          <button onClick={e => { e.stopPropagation(); setLeadToDelete(lead); }} className="text-muted-foreground hover:text-red-500"><Trash2 className="h-3 w-3" /></button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">{lead.whatsapp}</p>
+                      <Select
+                        value={lead.fase}
+                        onValueChange={value => handleMoveLead(lead.id, value)}
+                        disabled={lancamento.status === 'finalizado'}
+                      >
+                        <SelectTrigger className="mt-2 h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {colunas.map(c => (
+                            <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Board */}
-          <div className="overflow-x-auto">
+          {!searchQuery && <div className="overflow-x-auto">
             <div className="flex gap-4 min-w-full pb-4 items-start">
               {colunas.map(coluna => {
                 const colLeads = getLeadsByColuna(coluna.id);
@@ -950,9 +1404,146 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                 disabled={lancamento.status === 'finalizado'}
               />
             </div>
-          </div>
+          </div>}
         </>
       )}
+
+      {/* ── Add Lead Modal ── */}
+      <Dialog open={showAddLeadDialog} onOpenChange={open => { if (!open) { setShowAddLeadDialog(false); setNewLeadForm({ nome: '', whatsapp: '', email: '' }); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adicionar Lead</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder="Nome *"
+              value={newLeadForm.nome}
+              onChange={e => setNewLeadForm({ ...newLeadForm, nome: e.target.value })}
+            />
+            <Input
+              placeholder="WhatsApp *"
+              value={newLeadForm.whatsapp}
+              onChange={e => setNewLeadForm({ ...newLeadForm, whatsapp: e.target.value })}
+            />
+            <Input
+              placeholder="Email (opcional)"
+              value={newLeadForm.email}
+              onChange={e => setNewLeadForm({ ...newLeadForm, email: e.target.value })}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowAddLeadDialog(false)}>Cancelar</Button>
+              <Button onClick={handleAddLead} disabled={isAddingLead || !newLeadForm.nome || !newLeadForm.whatsapp}>
+                {isAddingLead ? 'Adicionando...' : 'Adicionar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Import CSV Modal ── */}
+      <Dialog open={showImportModal} onOpenChange={open => { if (!open) { setShowImportModal(false); setImportParsed(null); setImportResult(null); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> Importar Leads via CSV</DialogTitle>
+            <DialogDescription>
+              Selecione um arquivo .csv exportado do Google Sheets, Excel ou similar. Precisa ter pelo menos as colunas de nome e WhatsApp.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!importParsed && !importResult && (
+            <label className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-10 cursor-pointer hover:border-primary transition-colors">
+              <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+              <span className="text-sm text-muted-foreground">Clique para selecionar o arquivo .csv</span>
+              <input
+                type="file"
+                accept=".csv,.txt,.tsv"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ''; }}
+              />
+            </label>
+          )}
+
+          {importParsed && !importResult && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">{importParsed.rows.length} linha(s) detectada(s). Configure o mapeamento de colunas:</p>
+              <div className="grid grid-cols-1 gap-3">
+                {(['nome', 'whatsapp', 'email'] as const).map(field => (
+                  <div key={field} className="flex items-center gap-3">
+                    <span className="text-sm w-20 capitalize font-medium">{field === 'nome' ? 'Nome *' : field === 'whatsapp' ? 'WhatsApp *' : 'Email'}</span>
+                    <Select
+                      value={importMapping[field]}
+                      onValueChange={v => setImportMapping(m => ({ ...m, [field]: v }))}
+                    >
+                      <SelectTrigger className="flex-1 h-8 text-sm">
+                        <SelectValue placeholder="Selecionar coluna..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {field === 'email' && <SelectItem value="">— Ignorar —</SelectItem>}
+                        {importParsed.headers.map((h, i) => (
+                          <SelectItem key={i} value={String(i)}>{h || `Coluna ${i + 1}`}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+
+              {importParsed.rows.length > 0 && (
+                <div className="border rounded-lg overflow-hidden">
+                  <p className="text-xs text-muted-foreground px-3 py-1.5 bg-muted border-b">Prévia (primeiras 3 linhas)</p>
+                  <div className="overflow-x-auto">
+                    <table className="text-xs w-full">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          {importParsed.headers.map((h, i) => (
+                            <th key={i} className="px-2 py-1.5 text-left font-medium text-muted-foreground">{h || `Col ${i + 1}`}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importParsed.rows.slice(0, 3).map((row, ri) => (
+                          <tr key={ri} className="border-b last:border-0">
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="px-2 py-1.5 truncate max-w-[120px]">{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center pt-2">
+                <button onClick={() => setImportParsed(null)} className="text-sm text-muted-foreground hover:text-foreground">Trocar arquivo</button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setShowImportModal(false)}>Cancelar</Button>
+                  <Button
+                    onClick={handleDoImport}
+                    disabled={importing || !importMapping.nome || !importMapping.whatsapp}
+                    className="gap-2"
+                  >
+                    {importing ? <><Loader2 className="h-4 w-4 animate-spin" />Importando...</> : `Importar ${importParsed.rows.length} leads`}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {importResult && (
+            <div className="space-y-4 text-center py-4">
+              <div className="text-4xl">✅</div>
+              <div>
+                <p className="text-lg font-semibold">{importResult.inserted} lead(s) importado(s)!</p>
+                {importResult.dupes > 0 && (
+                  <p className="text-sm text-muted-foreground mt-1">{importResult.dupes} já existiam (WhatsApp duplicado) e foram ignorados.</p>
+                )}
+              </div>
+              <Button onClick={() => setShowImportModal(false)}>Fechar</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Edit Valor Matrícula Modal ── */}
       <Dialog open={editingValor} onOpenChange={setEditingValor}>
@@ -1055,6 +1646,18 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Observações</label>
               <Input value={editLeadForm.observacoes} onChange={e => setEditLeadForm(f => ({ ...f, observacoes: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Status do Contrato</label>
+              <Select value={editLeadForm.matriculado ? 'sim' : 'nao'} onValueChange={v => setEditLeadForm(f => ({ ...f, matriculado: v === 'sim' }))}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nao">Sem contrato</SelectItem>
+                  <SelectItem value="sim">Contrato assinado ✅</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex justify-end gap-2 mt-2">
               <Button variant="outline" onClick={() => setEditingLead(null)}>Cancelar</Button>
