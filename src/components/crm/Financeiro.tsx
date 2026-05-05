@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -117,6 +118,7 @@ function EtapaBadge({ etapa }: { etapa: EtapaContrato }) {
 
 export function Financeiro() {
   const { user } = useAuth();
+  const { permissions } = usePermissions();
   const [activeTab, setActiveTab] = useState<ProdutoTab>('psicanalise');
   const [subView, setSubView] = useState<SubView>('alunos');
   const [turmas, setTurmas] = useState<Turma[]>([]);
@@ -210,8 +212,14 @@ export function Financeiro() {
 
   // Dados filtrados por produto
   const filteredTurmas = useMemo(() => {
-    return turmas.filter(t => !t.produto || t.produto === activeTab);
-  }, [turmas, activeTab]);
+    return turmas.filter(t => {
+      if (t.produto && t.produto !== activeTab) return false;
+      if (!permissions.can_view_all_financeiro_turmas) {
+        return permissions.allowed_financeiro_turma_ids.includes(t.id);
+      }
+      return true;
+    });
+  }, [turmas, activeTab, permissions]);
 
   const filteredAlunos = useMemo(() => {
     let result = alunos.filter(a => a.produto === activeTab);
