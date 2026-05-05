@@ -23,10 +23,12 @@ import { LancamentoKanban } from './LancamentoKanban';
 import NPAKanban from './NPAKanban';
 import { AulaSecretaKanban } from './AulaSecretaKanban';
 import { supabase } from '@/integrations/supabase/client';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Loader2 } from 'lucide-react';
 
 export function CRMLayout() {
   const { user } = useAuth();
+  const { permissions } = usePermissions();
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [isLeadModalOpen, setIsLeadModalOpen] = useState(false);
   const [isFlashLeadModalOpen, setIsFlashLeadModalOpen] = useState(false);
@@ -111,7 +113,43 @@ export function CRMLayout() {
     loadAulaSecretaId();
   }, [currentView]);
 
+  const isViewAllowed = (view: View): boolean => {
+    if (user?.tipo === 'admin') return true;
+    const v = view as string;
+    if (v.startsWith('lancamentos_')) {
+      if (!permissions.can_view_lancamentos) return false;
+      if (!permissions.can_view_all_lancamentos) {
+        const id = v.replace('lancamentos_', '');
+        return permissions.allowed_lancamento_ids.includes(id);
+      }
+      return true;
+    }
+    if (v.startsWith('npa_')) return permissions.can_view_npa;
+    if (v.startsWith('aula_secreta_')) return permissions.can_view_aula_secreta;
+    if (v.startsWith('operacoes_')) return permissions.can_view_operacoes;
+    const map: Record<string, boolean> = {
+      dashboard: permissions.can_view_dashboard,
+      pipeline: permissions.can_view_pipeline,
+      chat: permissions.can_view_chat,
+      sheets: permissions.can_view_sheets,
+      financeiro: permissions.can_view_financeiro,
+      balanco: permissions.can_view_balanco,
+      mapa_mental: permissions.can_view_mapa_mental,
+      rodrygo: permissions.can_view_rodrygo,
+      pedagogico: permissions.can_view_pedagogico,
+      team: permissions.can_view_team,
+      settings: permissions.can_view_settings,
+    };
+    return map[v] ?? true;
+  };
+
+  const handleViewChange = (view: View) => {
+    if (isViewAllowed(view)) setCurrentView(view);
+  };
+
   const renderView = () => {
+    if (!isViewAllowed(currentView)) return <Dashboard />;
+
     // Handle dynamic lancamentos
     if (typeof currentView === 'string' && currentView.startsWith('lancamentos_')) {
       if (loadingLancamento) {
@@ -198,10 +236,10 @@ export function CRMLayout() {
     <div className="min-h-screen bg-white">
       <Header onAddLead={handleAddLead} onAddFlashLead={handleAddFlashLead} />
       <div className="flex h-[calc(100vh-4rem)]">
-        <Sidebar currentView={currentView} onViewChange={setCurrentView} />
+        <Sidebar currentView={currentView} onViewChange={handleViewChange} />
         <main className="flex-1 overflow-hidden">{renderView()}</main>
       </div>
-      <MobileNav currentView={currentView} onViewChange={setCurrentView} />
+      <MobileNav currentView={currentView} onViewChange={handleViewChange} />
       <LeadModal isOpen={isLeadModalOpen} onClose={() => setIsLeadModalOpen(false)} editingLead={editingLead} />
       <FlashLeadModal isOpen={isFlashLeadModalOpen} onClose={() => setIsFlashLeadModalOpen(false)} />
     </div>

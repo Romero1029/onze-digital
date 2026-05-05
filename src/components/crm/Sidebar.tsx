@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -71,6 +72,7 @@ const MENU: MenuItem[] = [
 
 export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   const { user } = useAuth();
+  const { permissions } = usePermissions();
   const isAdmin = user?.tipo === 'admin';
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -233,6 +235,29 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
         {MENU.map((item, idx) => {
           if ('adminOnly' in item && item.adminOnly && !isAdmin) return null;
 
+          // Filtro de permissões por grupo
+          if ('group' in item) {
+            if (item.group === 'lancamentos_legado' && !permissions.can_view_lancamentos) return null;
+            if (item.group === 'npa_dinamico' && !permissions.can_view_npa) return null;
+            if (item.group === 'aula_secreta' && !permissions.can_view_aula_secreta) return null;
+            if (item.group === 'operacoes' && !permissions.can_view_operacoes) return null;
+          }
+
+          // Filtro de permissões por item simples
+          if ('key' in item) {
+            if (item.key === 'dashboard' && !permissions.can_view_dashboard) return null;
+            if (item.key === 'pipeline' && !permissions.can_view_pipeline) return null;
+            if (item.key === 'chat' && !permissions.can_view_chat) return null;
+            if (item.key === 'sheets' && !permissions.can_view_sheets) return null;
+            if (item.key === 'financeiro' && !permissions.can_view_financeiro) return null;
+            if (item.key === 'balanco' && !permissions.can_view_balanco) return null;
+            if (item.key === 'mapa_mental' && !permissions.can_view_mapa_mental) return null;
+            if (item.key === 'rodrygo' && !permissions.can_view_rodrygo) return null;
+            if (item.key === 'pedagogico' && !permissions.can_view_pedagogico) return null;
+            if (item.key === 'team' && !permissions.can_view_team) return null;
+            if (item.key === 'settings' && !permissions.can_view_settings) return null;
+          }
+
           const needsSeparator =
             (idx > 0 && MENU[idx - 1]?.key === 'dashboard') ||
             (idx > 0 && MENU[idx - 1]?.group === 'npa') ||
@@ -243,10 +268,12 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
             let renderedChildren = item.children;
 
             if (item.group === 'lancamentos_legado') {
-              renderedChildren = lancamentos.map(l => ({
-                key: `lancamentos_${l.id}` as View,
-                label: l.nome,
-              }));
+              renderedChildren = lancamentos
+                .filter(l => permissions.can_view_all_lancamentos || permissions.allowed_lancamento_ids.includes(l.id))
+                .map(l => ({
+                  key: `lancamentos_${l.id}` as View,
+                  label: l.nome,
+                }));
             } else if (item.group === 'npa_dinamico') {
               renderedChildren = npaEventos.map(e => ({
                 key: `npa_${e.id}` as View,
