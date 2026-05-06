@@ -15,7 +15,7 @@ import {
 import {
   Plus, Search, AlertCircle, Users, Target, DollarSign,
   Loader2, Power, Trash2, Pencil, TrendingUp, BarChart2,
-  ChevronUp, ChevronDown,
+  ChevronUp, ChevronDown, Upload, FileText, UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useKanbanColunas } from './kanban/useKanbanColunas';
@@ -635,6 +635,45 @@ function TrafegoTab({ lancamento, leads: crmLeads }: {
   );
 }
 
+// ─── CSV Import Helpers ────────────────────────────────────────────────────────
+
+function parseCSV(text: string): { headers: string[]; rows: string[][] } {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return { headers: [], rows: [] };
+  const first = lines[0];
+  const tabs = (first.match(/\t/g) || []).length;
+  const semis = (first.match(/;/g) || []).length;
+  const commas = (first.match(/,/g) || []).length;
+  const sep = tabs >= semis && tabs >= commas ? '\t' : semis >= commas ? ';' : ',';
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+      else if (ch === sep && !inQ) { result.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    result.push(cur.trim());
+    return result;
+  };
+  const headers = parseLine(lines[0]).map(h => h.replace(/^"|"$/g, '').toLowerCase().trim());
+  const rows = lines.slice(1).map(parseLine).filter(r => r.some(c => c.trim()));
+  return { headers, rows };
+}
+
+function autoDetectMapping(headers: string[]): { nome: string; whatsapp: string; email: string } {
+  const find = (...patterns: RegExp[]) => {
+    const idx = headers.findIndex(h => patterns.some(p => p.test(h)));
+    return idx >= 0 ? String(idx) : '';
+  };
+  return {
+    nome: find(/^nome$/i, /^name$/i, /nome.+completo/i, /^nome/i, /^lead/i),
+    whatsapp: find(/whatsapp/i, /celular/i, /telefone/i, /^phone/i, /^tel$/i, /^fone$/i, /^contato/i),
+    email: find(/^e?-?mail$/i, /^email/i),
+  };
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
@@ -654,6 +693,16 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   const [editLeadForm, setEditLeadForm] = useState({ nome: '', whatsapp: '', email: '', observacoes: '', matriculado: false });
   const [editingValor, setEditingValor] = useState(false);
   const [valorInput, setValorInput] = useState('');
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importParsed, setImportParsed] = useState<{ headers: string[]; rows: string[][] } | null>(null);
+  const [importMapping, setImportMapping] = useState({ nome: '', whatsapp: '', email: '' });
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ inserted: number; dupes: number } | null>(null);
+
+  const [showSyncGrupoModal, setShowSyncGrupoModal] = useState(false);
+  const [syncGrupoInput, setSyncGrupoInput] = useState('');
+  const [syncingGrupo, setSyncingGrupo] = useState(false);
+  const [syncGrupoResult, setSyncGrupoResult] = useState<{ updated: number; notFound: number } | null>(null);
 
   // Column management
   const [renamingColuna, setRenamingColuna] = useState<KanbanColuna | null>(null);
@@ -879,6 +928,125 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     setNewLeadForm({ nome: '', whatsapp: '', email: '' });
     setShowAddLeadDialog(false);
     toast.success('Lead adicionado!');
+  };
+
+  // ── CSV Import ─────────────────────────────────────────────────────────────
+  const handleFileSelect = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const parsed = parseCSV(text);
+      if (parsed.headers.length === 0) { toast.error('Arquivo inválido ou vazio'); return; }
+      const mapping = autoDetectMapping(parsed.headers);
+      setImportParsed(parsed);
+      setImportMapping(mapping);
+      setImportResult(null);
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleDoImport = async () => {
+    if (!importParsed || !importMapping.nome || !importMapping.whatsapp) return;
+    const primeiraColuna = colunasRef.current[0];
+    if (!primeiraColuna) { toast.error('Nenhuma coluna encontrada'); return; }
+    setImporting(true);
+
+    const nomeIdx = Number(importMapping.nome);
+    const waIdx = Number(importMapping.whatsapp);
+    const emailIdx = importMapping.email !== '' && importMapping.email !== '__none__' ? Number(importMapping.email) : -1;
+
+    const existingWas = new Set(leads.map(l => l.whatsapp.replace(/\D/g, '')));
+
+    const toInsert = importParsed.rows
+      .map(row => ({
+        nome: row[nomeIdx]?.trim() || '',
+        whatsapp: row[waIdx]?.trim() || '',
+        email: emailIdx >= 0 ? row[emailIdx]?.trim() || null : null,
+      }))
+      .filter(r => r.nome && r.whatsapp);
+
+    const dupes = toInsert.filter(r => existingWas.has(r.whatsapp.replace(/\D/g, ''))).length;
+    const fresh = toInsert.filter(r => !existingWas.has(r.whatsapp.replace(/\D/g, '')));
+
+    const BATCH = 100;
+    let inserted = 0;
+    for (let i = 0; i < fresh.length; i += BATCH) {
+      const batch = fresh.slice(i, i + BATCH).map(r => ({
+        lancamento_id: lancamentoId,
+        nome: r.nome,
+        whatsapp: r.whatsapp,
+        email: r.email || null,
+        fase: primeiraColuna.id,
+        no_grupo: false,
+        grupo_oferta: false,
+        follow_up_01: false,
+        follow_up_02: false,
+        follow_up_03: false,
+        matriculado: false,
+        responsavel_id: vinicius?.id || null,
+      }));
+      const { error } = await supabase.from('lancamento_leads').insert(batch);
+      if (error) { toast.error('Erro ao importar: ' + error.message); break; }
+      inserted += batch.length;
+    }
+
+    setImporting(false);
+    setImportResult({ inserted, dupes });
+    if (inserted > 0) {
+      const newLeads = await fetchAllLeads(lancamentoId) as LaunchLead[];
+      const normalized = await normalizeLeadsToCurrentColunas(newLeads);
+      setLeads(normalized);
+      toast.success(`${inserted} leads importados!`);
+    }
+  };
+
+  // ── Sync WhatsApp group ─────────────────────────────────────────────────────
+  const handleSyncGrupo = async () => {
+    if (!syncGrupoInput.trim()) return;
+    setSyncingGrupo(true);
+
+    // Normalize phone to last 11 digits (DDD + número), removing country code 55 if present
+    const normalizePhone = (raw: string) => {
+      const digits = raw.replace(/\D/g, '');
+      if ((digits.length === 13 || digits.length === 12) && digits.startsWith('55')) return digits.slice(2);
+      return digits.slice(-11);
+    };
+
+    // Extract phoneNumber fields (format: "5511999999999@s.whatsapp.net") first,
+    // falling back to any 8+ digit sequence if none found
+    const phoneFieldMatches = [...syncGrupoInput.matchAll(/"phoneNumber"\s*:\s*"(\d+)@/g)].map(m => m[1]);
+    const rawNumbers = phoneFieldMatches.length > 0
+      ? phoneFieldMatches
+      : (syncGrupoInput.match(/(\d{8,})@s\.whatsapp\.net/g) || []).map(m => m.replace(/@.*/, ''))
+        .concat((syncGrupoInput.match(/\d{8,}/g) || []));
+    const uniqueRaw = [...new Set(rawNumbers)];
+    // Compare by last 8 digits (core number without area code or 9-prefix)
+    // WhatsApp stores old 8-digit format; leads may have new 9-digit format
+    const groupSuffix8 = new Set(uniqueRaw.map(n => normalizePhone(n).slice(-8)));
+
+    const matchedLeads = leads.filter(lead => {
+      const norm = normalizePhone(lead.whatsapp);
+      return groupSuffix8.has(norm.slice(-8));
+    });
+
+    const notFound = uniqueRaw.length - matchedLeads.length;
+
+    const BATCH = 100;
+    let updated = 0;
+    for (let i = 0; i < matchedLeads.length; i += BATCH) {
+      const ids = matchedLeads.slice(i, i + BATCH).map(l => l.id);
+      const { error } = await supabase
+        .from('lancamento_leads')
+        .update({ no_grupo: true })
+        .in('id', ids);
+      if (!error) {
+        updated += ids.length;
+        setLeads(prev => prev.map(l => ids.includes(l.id) ? { ...l, no_grupo: true } : l));
+      }
+    }
+
+    setSyncingGrupo(false);
+    setSyncGrupoResult({ updated, notFound: Math.max(0, notFound) });
   };
 
   // ── Toggle active ───────────────────────────────────────────────────────────
@@ -1147,6 +1315,14 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
                 className="pl-10"
               />
             </div>
+            <Button variant="outline" className="gap-2" onClick={() => { setShowImportModal(true); setImportParsed(null); setImportResult(null); }}>
+              <Upload className="h-4 w-4" />
+              Importar CSV
+            </Button>
+            <Button variant="outline" className="gap-2" onClick={() => { setShowSyncGrupoModal(true); setSyncGrupoInput(''); setSyncGrupoResult(null); }}>
+              <UserCheck className="h-4 w-4" />
+              Sincronizar Grupo
+            </Button>
             <Button variant="default" className="gap-2" onClick={() => setShowAddLeadDialog(true)}>
               <Plus className="h-4 w-4" />
               Adicionar Lead
@@ -1319,6 +1495,183 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Import CSV Modal ── */}
+      <Dialog open={showImportModal} onOpenChange={open => { if (!open) { setShowImportModal(false); setImportParsed(null); setImportResult(null); } }}>
+        <DialogContent className="max-w-lg flex flex-col max-h-[90vh]">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> Importar Leads via CSV</DialogTitle>
+            <DialogDescription>
+              Selecione um arquivo .csv exportado do Google Sheets, Excel ou similar. Precisa ter pelo menos as colunas de nome e WhatsApp.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!importParsed && !importResult && (
+            <label className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-10 cursor-pointer hover:border-primary transition-colors">
+              <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+              <span className="text-sm text-muted-foreground">Clique para selecionar o arquivo .csv</span>
+              <input
+                type="file"
+                accept=".csv,.txt,.tsv"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ''; }}
+              />
+            </label>
+          )}
+
+          {importParsed && !importResult && (
+            <div className="flex flex-col gap-4 min-h-0 flex-1">
+              <div className="overflow-y-auto flex-1 space-y-4 pr-1">
+                <p className="text-sm text-muted-foreground">{importParsed.rows.length} linha(s) detectada(s). Configure o mapeamento de colunas:</p>
+                <div className="grid grid-cols-1 gap-3">
+                  {(['nome', 'whatsapp', 'email'] as const).map(field => (
+                    <div key={field} className="flex items-center gap-3">
+                      <span className="text-sm w-24 shrink-0 font-medium">{field === 'nome' ? 'Nome *' : field === 'whatsapp' ? 'WhatsApp *' : 'Email'}</span>
+                      <Select
+                        value={importMapping[field]}
+                        onValueChange={v => setImportMapping(m => ({ ...m, [field]: v }))}
+                      >
+                        <SelectTrigger className="flex-1 h-9 text-sm">
+                          <SelectValue placeholder="Selecionar coluna..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {field === 'email' && <SelectItem value="__none__">— Ignorar —</SelectItem>}
+                          {importParsed.headers.map((h, i) => (
+                            <SelectItem key={i} value={String(i)}>{h || `Coluna ${i + 1}`}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border rounded-lg overflow-hidden">
+                  <p className="text-xs text-muted-foreground px-3 py-1.5 bg-muted border-b">Prévia (primeiras 3 linhas)</p>
+                  <div className="overflow-x-auto max-h-36">
+                    <table className="text-xs w-full">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          {importParsed.headers.map((h, i) => (
+                            <th key={i} className="px-2 py-1.5 text-left font-medium text-muted-foreground whitespace-nowrap">{h || `Col ${i + 1}`}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importParsed.rows.slice(0, 3).map((row, ri) => (
+                          <tr key={ri} className="border-b last:border-0">
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="px-2 py-1.5 truncate max-w-[100px] whitespace-nowrap">{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-2 border-t flex-shrink-0">
+                <button onClick={() => setImportParsed(null)} className="text-sm text-muted-foreground hover:text-foreground">Trocar arquivo</button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setShowImportModal(false)}>Cancelar</Button>
+                  <Button
+                    onClick={handleDoImport}
+                    disabled={importing || !importMapping.nome || !importMapping.whatsapp}
+                    className="gap-2"
+                  >
+                    {importing ? <><Loader2 className="h-4 w-4 animate-spin" />Importando...</> : `Importar ${importParsed.rows.length} leads`}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {importResult && (
+            <div className="space-y-4 text-center py-4">
+              <div className="text-4xl">✅</div>
+              <div>
+                <p className="text-lg font-semibold">{importResult.inserted} lead(s) importado(s)!</p>
+                {importResult.dupes > 0 && (
+                  <p className="text-sm text-muted-foreground mt-1">{importResult.dupes} já existiam (WhatsApp duplicado) e foram ignorados.</p>
+                )}
+              </div>
+              <Button onClick={() => setShowImportModal(false)}>Fechar</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Sincronizar Grupo WhatsApp Modal ── */}
+      <Dialog open={showSyncGrupoModal} onOpenChange={open => { if (!open) { setShowSyncGrupoModal(false); setSyncGrupoInput(''); setSyncGrupoResult(null); } }}>
+        <DialogContent className="max-w-lg flex flex-col max-h-[90vh]">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2"><UserCheck className="h-5 w-5" /> Sincronizar Grupo WhatsApp</DialogTitle>
+            <DialogDescription>
+              Cole abaixo o JSON exportado do grupo do WhatsApp. Os leads que tiverem o número detectado serão marcados como <strong>no_grupo = true</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!syncGrupoResult ? (
+            <div className="flex flex-col gap-4 min-h-0 flex-1">
+              {/* File upload */}
+              <label className="flex items-center gap-3 border border-dashed border-border rounded-lg px-4 py-3 cursor-pointer hover:border-primary transition-colors">
+                <Upload className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="text-sm text-muted-foreground">
+                  {syncGrupoInput ? 'Arquivo carregado — ou clique para trocar' : 'Selecionar arquivo JSON do grupo'}
+                </span>
+                <input
+                  type="file"
+                  accept=".json,.txt"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => setSyncGrupoInput(ev.target?.result as string ?? '');
+                    reader.readAsText(f, 'UTF-8');
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+
+              <p className="text-xs text-muted-foreground text-center">— ou cole o JSON abaixo —</p>
+
+              <textarea
+                className="flex-1 min-h-[140px] text-xs font-mono border border-border rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder='[{"phoneNumber":"5511999999999@s.whatsapp.net"}, ...]'
+                value={syncGrupoInput}
+                onChange={e => setSyncGrupoInput(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {syncGrupoInput
+                  ? `${[...syncGrupoInput.matchAll(/"phoneNumber"\s*:\s*[\n\r\s]*"(\d+)@/g)].length || (syncGrupoInput.match(/\d{8,}/g) || []).length} número(s) detectado(s)`
+                  : 'Aguardando arquivo ou colagem...'}
+              </p>
+              <div className="flex justify-end gap-2 pt-2 border-t flex-shrink-0">
+                <Button variant="outline" onClick={() => setShowSyncGrupoModal(false)}>Cancelar</Button>
+                <Button
+                  onClick={handleSyncGrupo}
+                  disabled={syncingGrupo || !syncGrupoInput.trim()}
+                  className="gap-2"
+                >
+                  {syncingGrupo ? <><Loader2 className="h-4 w-4 animate-spin" />Sincronizando...</> : 'Marcar como no grupo'}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 text-center py-6">
+              <div className="text-4xl">✅</div>
+              <div>
+                <p className="text-lg font-semibold">{syncGrupoResult.updated} lead(s) marcado(s) como no grupo!</p>
+                {syncGrupoResult.notFound > 0 && (
+                  <p className="text-sm text-muted-foreground mt-1">{syncGrupoResult.notFound} número(s) do grupo não encontrado(s) na planilha.</p>
+                )}
+              </div>
+              <Button onClick={() => setShowSyncGrupoModal(false)}>Fechar</Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

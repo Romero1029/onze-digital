@@ -35,19 +35,8 @@ interface Turma {
   data_inicio?: string; data_fim?: string; status: string;
 }
 
-const LANCAMENTO_33_ID = 'b08aa4e0-33b9-45bf-bbab-45227c7a9a76';
-
 function isTruthyFlag(value: unknown) {
   return value === true || String(value || '').trim().toUpperCase() === 'SIM';
-}
-
-function isLancamento33(lancamento: any) {
-  const nome = String(lancamento?.nome || '').toLowerCase();
-  return lancamento?.id === LANCAMENTO_33_ID || nome.includes('#33') || nome.includes('33');
-}
-
-function pickDashboardLancamento(lancamentos: any[]) {
-  return lancamentos.find(isLancamento33) || lancamentos[0] || null;
 }
 
 function isPlanilhaLancamentoLead(lead: any) {
@@ -80,8 +69,10 @@ export function Dashboard() {
   const [turmas, setTurmas] = useState<Turma[]>([]);
   const [lancamentosAtivos, setLancamentosAtivos] = useState<any[]>([]);
   const [lancamentosLeads, setLancamentosLeads] = useState<any[]>([]);
-  const [npaAtivo, setNpaAtivo] = useState<any>(null);
+  const [npaEventos, setNpaEventos] = useState<any[]>([]);
   const [npaLeads, setNpaLeads] = useState<any[]>([]);
+  const [selectedLancamentoId, setSelectedLancamentoId] = useState<string>('');
+  const [selectedNpaId, setSelectedNpaId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const isAdmin = user?.tipo === 'admin';
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,8 +95,8 @@ export function Dashboard() {
           .select('id, titulo, status, prioridade, responsavel_id, responsaveis, prazo, categoria, pagina, created_at')
           .order('prazo').limit(50),
         supabase.from('turmas').select('id, nome, produto, data_inicio, data_fim, status'),
-        supabase.from('lancamentos').select('id, nome, ativo, created_at').eq('ativo', true).order('created_at', { ascending: false }).limit(10),
-        supabase.from('npa_eventos').select('id, nome, ativo').eq('ativo', true).limit(1),
+        supabase.from('lancamentos').select('id, nome, ativo, created_at').order('created_at', { ascending: false }).limit(20),
+        supabase.from('npa_eventos').select('id, nome, ativo').order('created_at', { ascending: false }).limit(20),
       ]);
 
       if (leadsRes.data) setLeads(leadsRes.data as Lead[]);
@@ -113,48 +104,17 @@ export function Dashboard() {
       if (pagamentosRes.data) setPagamentos(pagamentosRes.data as Pagamento[]);
       if (tasksRes.data) setTasks(tasksRes.data as Task[]);
       if (turmasRes.data) setTurmas(turmasRes.data as Turma[]);
-      const sortedLancamentos = [...(lancamentosRes.data || [])].sort((a, b) => {
-        if (isLancamento33(a)) return -1;
-        if (isLancamento33(b)) return 1;
-        return 0;
-      });
+      const sortedLancamentos = lancamentosRes.data || [];
       setLancamentosAtivos(sortedLancamentos);
+      const allNpas = npaEventosRes.data || [];
+      setNpaEventos(allNpas);
 
-      const dashboardLancamento = pickDashboardLancamento(sortedLancamentos);
-      if (dashboardLancamento) {
-        const lancId = dashboardLancamento.id;
-        const allLancLeads: any[] = [];
-        let from = 0;
-        while (true) {
-          const { data: page } = await supabase.from('lancamento_leads')
-            .select('id, lancamento_id, fase, no_grupo, grupo_oferta, follow_up_01, follow_up_02, follow_up_03, matriculado')
-            .eq('lancamento_id', lancId)
-            .range(from, from + 999);
-          if (!page || page.length === 0) break;
-          allLancLeads.push(...page);
-          if (page.length < 1000) break;
-          from += 1000;
-        }
-        setLancamentosLeads(allLancLeads);
-      }
+      // Define seleção inicial só na primeira carga
+      const firstLancId = sortedLancamentos[0]?.id || '';
+      const firstNpaId = allNpas[0]?.id || '';
+      setSelectedLancamentoId(prev => prev || firstLancId);
+      setSelectedNpaId(prev => prev || firstNpaId);
 
-      if (npaEventosRes.data && npaEventosRes.data.length > 0) {
-        const npaEvento = npaEventosRes.data[0];
-        setNpaAtivo(npaEvento);
-        const allNpaLeads: any[] = [];
-        let from = 0;
-        while (true) {
-          const { data: page } = await supabase.from('npa_evento_leads')
-            .select('id, npa_evento_id, fase, matriculado')
-            .eq('npa_evento_id', npaEvento.id)
-            .range(from, from + 999);
-          if (!page || page.length === 0) break;
-          allNpaLeads.push(...page);
-          if (page.length < 1000) break;
-          from += 1000;
-        }
-        setNpaLeads(allNpaLeads);
-      }
 
       if (showLoading) setLoading(false);
     };
@@ -183,6 +143,49 @@ export function Dashboard() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  // Carrega leads do lançamento selecionado
+  useEffect(() => {
+    if (!selectedLancamentoId) return;
+    const load = async () => {
+      const all: any[] = [];
+      let from = 0;
+      while (true) {
+        const { data: page } = await supabase.from('lancamento_leads')
+          .select('id, lancamento_id, fase, no_grupo, grupo_oferta, follow_up_01, follow_up_02, follow_up_03, matriculado')
+          .eq('lancamento_id', selectedLancamentoId)
+          .range(from, from + 999);
+        if (!page || page.length === 0) break;
+        all.push(...page);
+        if (page.length < 1000) break;
+        from += 1000;
+      }
+      setLancamentosLeads(all);
+    };
+    load();
+  }, [selectedLancamentoId]);
+
+  // Carrega leads do NPA selecionado
+  useEffect(() => {
+    if (!selectedNpaId) return;
+    const npa = npaEventos.find(n => n.id === selectedNpaId);
+    const load = async () => {
+      const all: any[] = [];
+      let from = 0;
+      while (true) {
+        const { data: page } = await supabase.from('npa_evento_leads')
+          .select('id, npa_evento_id, fase, matriculado')
+          .eq('npa_evento_id', selectedNpaId)
+          .range(from, from + 999);
+        if (!page || page.length === 0) break;
+        all.push(...page);
+        if (page.length < 1000) break;
+        from += 1000;
+      }
+      setNpaLeads(all);
+    };
+    load();
+  }, [selectedNpaId, npaEventos]);
 
   const getFilterStartDate = (filter: TimeFilter): Date | null => {
     const now = new Date();
@@ -238,9 +241,8 @@ export function Dashboard() {
   }, [filteredAlunos, pagamentos]);
 
   const getFunilData = (produto: 'direto' | 'lancamento' | 'npa') => {
-    if (produto === 'lancamento' && lancamentosAtivos.length > 0) {
-      const dashboardLancamento = pickDashboardLancamento(lancamentosAtivos);
-      const ll = dashboardLancamento ? lancamentosLeads.filter(l => l.lancamento_id === dashboardLancamento.id) : [];
+    if (produto === 'lancamento') {
+      const ll = lancamentosLeads.filter(l => l.lancamento_id === selectedLancamentoId);
       return {
         planilha: ll.filter(l => getLancamentoStage(l) === 'planilha').length,
         grupoLancamento: ll.filter(l => getLancamentoStage(l) === 'grupoLancamento').length,
@@ -250,11 +252,9 @@ export function Dashboard() {
         followUp03: ll.filter(l => getLancamentoStage(l) === 'followUp03').length,
         matricula: ll.filter(l => getLancamentoStage(l) === 'matricula').length,
       };
-    } else if (produto === 'lancamento') {
-      return { planilha: 0, grupoLancamento: 0, grupoOferta: 0, followUp01: 0, followUp02: 0, followUp03: 0, matricula: 0 };
     }
-    if (produto === 'npa' && npaAtivo) {
-      const nl = npaLeads.filter(l => l.npa_evento_id === npaAtivo.id);
+    if (produto === 'npa' && selectedNpaId) {
+      const nl = npaLeads.filter(l => l.npa_evento_id === selectedNpaId);
       return {
         novo: nl.filter(l => l.fase === 'novo').length,
         ingressoPago: nl.filter(l => l.fase === 'ingresso_pago').length,
@@ -268,7 +268,7 @@ export function Dashboard() {
         matricula: nl.filter(l => l.fase === 'matricula').length,
       };
     } else if (produto === 'npa') {
-      return { novo:0, ingressoPago:0, noGrupo:0, confirmado:0, evento:0, closer:0, followUp01:0, followUp02:0, followUp03:0, matricula:0 };
+      return { novo: 0, ingressoPago: 0, noGrupo: 0, confirmado: 0, evento: 0, closer: 0, followUp01: 0, followUp02: 0, followUp03: 0, matricula: 0 };
     }
     const pl = filteredLeads.filter(l => l.produto === produto);
     return {
@@ -306,8 +306,6 @@ export function Dashboard() {
   };
 
   const tarefasCriticas = tasks.filter(t => t.status !== 'concluido' && t.prazo && isPast(new Date(t.prazo))).slice(0, 3);
-  const dashboardLancamento = pickDashboardLancamento(lancamentosAtivos);
-
   const getSaudeFinanceira = (produto: 'psicanalise' | 'numerologia') => {
     const produtoAlunos = filteredAlunos.filter(a => a.produto === produto && a.status === 'ativo');
     const receitaRecorrente = produto === 'psicanalise' ? produtoAlunos.length * 109.90 : 0;
@@ -396,8 +394,8 @@ export function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {[
           { titulo: 'Lead Direto', cor: 'text-blue-700', produto: 'direto' as const },
-          { titulo: `Lançamento${lancamentosAtivos.length > 0 ? ` (${lancamentosAtivos[0].nome})` : ''}`, cor: 'text-purple-700', produto: 'lancamento' as const },
-          { titulo: `NPA${npaAtivo ? ` (${npaAtivo.nome})` : ''}`, cor: 'text-orange-700', produto: 'npa' as const },
+          { titulo: 'Lançamento', cor: 'text-purple-700', produto: 'lancamento' as const },
+          { titulo: 'NPA', cor: 'text-orange-700', produto: 'npa' as const },
         ].map(({ titulo, cor, produto }) => {
           const funil = getFunilData(produto);
           const etapas = produto === 'lancamento'
@@ -406,12 +404,36 @@ export function Dashboard() {
             ? [['Novo','novo'],['Ingresso Pago','ingressoPago'],['No Grupo','noGrupo'],['Confirmado','confirmado'],['Evento','evento'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']]
             : [['Novo','novo'],['SDR','sdr'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']];
           const total = produto === 'lancamento'
-            ? (dashboardLancamento ? lancamentosLeads.filter(l => l.lancamento_id === dashboardLancamento.id).length : 0)
-            : produto === 'npa' ? (npaAtivo ? npaLeads.filter(l => l.npa_evento_id === npaAtivo.id).length : 0)
+            ? lancamentosLeads.filter(l => l.lancamento_id === selectedLancamentoId).length
+            : produto === 'npa' ? npaLeads.filter(l => l.npa_evento_id === selectedNpaId).length
             : filteredLeads.filter(l => l.produto === 'direto').length;
           return (
             <Card key={produto} className="p-6 border">
-              <h3 className={`font-600 mb-4 ${cor}`}>{titulo}</h3>
+              {produto === 'lancamento' ? (
+                <Select value={selectedLancamentoId} onValueChange={setSelectedLancamentoId}>
+                  <SelectTrigger className={`h-8 text-sm font-semibold mb-4 ${cor} border-0 shadow-none px-0 focus:ring-0`}>
+                    <SelectValue placeholder="Selecionar lançamento" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {lancamentosAtivos.map(l => (
+                      <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : produto === 'npa' ? (
+                <Select value={selectedNpaId} onValueChange={setSelectedNpaId}>
+                  <SelectTrigger className={`h-8 text-sm font-semibold mb-4 ${cor} border-0 shadow-none px-0 focus:ring-0`}>
+                    <SelectValue placeholder="Selecionar NPA" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {npaEventos.map(n => (
+                      <SelectItem key={n.id} value={n.id}>{n.nome}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <h3 className={`font-semibold mb-4 ${cor}`}>{titulo}</h3>
+              )}
               <div className="space-y-3">
                 {etapas.map(([label, key], i) => (
                   <div key={i} className="flex items-center justify-between">
