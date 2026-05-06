@@ -1072,6 +1072,11 @@ export function Financeiro() {
                                         : <span title="Sem contrato" className="text-gray-300 text-[10px]">-</span>
                                     }
                                   </div>
+                                  {aluno.observacoes && (
+                                    <p className="text-[11px] text-muted-foreground font-normal mt-0.5 leading-tight max-w-[180px] truncate" title={aluno.observacoes}>
+                                      {aluno.observacoes}
+                                    </p>
+                                  )}
                                 </td>
                                 <td className="py-2.5 px-3">
                                   {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">-</span>}
