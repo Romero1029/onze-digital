@@ -87,6 +87,7 @@ type SubView = 'alunos' | 'turmas';
 type PaymentMethod = 'boleto' | 'cartao' | 'avista';
 type PaymentFilter = 'todos' | PaymentMethod;
 type DueFilter = 'todos' | 'vencidos' | 'hoje' | 'proximos_7' | 'proximos_30' | 'quitados';
+type DueDayFilter = 'todos' | `dia_${number}`;
 
 const formatCurrency = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -135,10 +136,31 @@ const paymentMethodTotal = (method?: string | null) => {
   return 15;
 };
 
-const extractDueDay = (value?: string | number | null) => {
+const readDueDay = (value?: string | number | null) => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const match = String(value || '').match(/\d+/);
-  return match ? Number(match[0]) : 10;
+  return match ? Number(match[0]) : null;
+};
+
+const extractDueDay = (value?: string | number | null) => readDueDay(value) || 10;
+
+const extractDateDay = (value?: string | null) => {
+  const date = parseDateOnly(value);
+  return date ? date.getDate() : null;
+};
+
+const getAlunoDueDay = (
+  aluno: Pick<Aluno, 'dia_vencimento' | 'dia_vencimento_contrato'>,
+  parcelas: Pick<Pagamento, 'data_vencimento' | 'numero_parcela'>[] = [],
+) => {
+  const alunoDay = readDueDay(aluno.dia_vencimento);
+  if (alunoDay) return alunoDay;
+
+  const contratoDay = readDueDay(aluno.dia_vencimento_contrato);
+  if (contratoDay) return contratoDay;
+
+  const parcelaBase = parcelas.find(p => p.numero_parcela > 1 && p.data_vencimento) || parcelas.find(p => p.data_vencimento);
+  return extractDateDay(parcelaBase?.data_vencimento) || 10;
 };
 
 const buildInstallments = ({
@@ -266,6 +288,7 @@ export function Financeiro() {
   const [pagoInfo, setPagoInfo] = useState<{ pagamentoId: string; alunoId: string; data: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<'todos' | 'ativo' | 'inadimplente' | 'cancelado'>('todos');
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('todos');
+  const [dueDayFilter, setDueDayFilter] = useState<DueDayFilter>('todos');
   const [dueFilter, setDueFilter] = useState<DueFilter>('todos');
 
   useEffect(() => { loadData(); }, []);
@@ -297,12 +320,24 @@ export function Financeiro() {
     });
   }, [turmas, activeTab, permissions, isAdmin]);
   const filteredPagamentos = useMemo(() => pagamentos.filter(p => p.produto === activeTab), [pagamentos, activeTab]);
+  const pagamentosPorAluno = useMemo(() => {
+    const map: Record<string, Pagamento[]> = {};
+    filteredPagamentos.forEach(p => {
+      if (!map[p.aluno_id]) map[p.aluno_id] = [];
+      map[p.aluno_id].push(p);
+    });
+    Object.values(map).forEach(lista => lista.sort((a, b) => (a.numero_parcela || 0) - (b.numero_parcela || 0)));
+    return map;
+  }, [filteredPagamentos]);
 
   // Inadimplencia calculada a partir dos pagamentos reais (nao do campo manual)
   const inadimplenciaMap = useMemo(() => {
     const map: Record<string, { diasAtraso: number; valorEmAtraso: number; parcelasAtrasadas: number }> = {};
     const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
     filteredPagamentos.forEach(p => {
+      const aluno = alunos.find(a => a.id === p.aluno_id);
+      if (aluno && normalizePaymentMethod(aluno.forma_pagamento) !== 'boleto') return;
+
       if (p.status !== 'pago') {
         const venc = new Date(p.data_vencimento + 'T12:00:00');
         if (venc < hoje) {
@@ -315,14 +350,55 @@ export function Financeiro() {
       }
     });
     return map;
-  }, [filteredPagamentos]);
+  }, [filteredPagamentos, alunos]);
+
+  const alunosNoEscopo = useMemo(() => {
+    let r = alunos.filter(a => {
+      if (a.produto !== activeTab) return false;
+      if (isAdmin) return true;
+      if (!permissions) return true;
+      return canAccessFinanceiroTurma(permissions, a.turma_id);
+    });
+    if (selectedTurmaId !== 'todas') r = r.filter(a => a.turma_id === selectedTurmaId);
+    if (statusFilter !== 'todos') {
+      if (statusFilter === 'inadimplente') r = r.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente');
+      else r = r.filter(a => a.status === statusFilter);
+    }
+    return r;
+  }, [alunos, activeTab, selectedTurmaId, permissions, isAdmin, statusFilter, inadimplenciaMap]);
+
+  const paymentCounts = useMemo(() => {
+    return alunosNoEscopo.reduce<Record<PaymentMethod, number>>((acc, aluno) => {
+      acc[normalizePaymentMethod(aluno.forma_pagamento)] += 1;
+      return acc;
+    }, { boleto: 0, cartao: 0, avista: 0 });
+  }, [alunosNoEscopo]);
+
+  const dueDayOptions = useMemo(() => {
+    const counts = new Map<number, number>();
+    [10, 20, 30].forEach(day => counts.set(day, 0));
+
+    alunosNoEscopo.forEach(aluno => {
+      if (normalizePaymentMethod(aluno.forma_pagamento) !== 'boleto') return;
+      const day = getAlunoDueDay(aluno, pagamentosPorAluno[aluno.id] || []);
+      counts.set(day, (counts.get(day) || 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([day, count]) => ({ key: `dia_${day}` as DueDayFilter, day, count }));
+  }, [alunosNoEscopo, pagamentosPorAluno]);
 
   const filteredAlunos = useMemo(() => {
     const today = parseDateOnly(todayDateInput())!;
-    const matchesDueFilter = (alunoId: string) => {
+    const matchesDueFilter = (aluno: Aluno) => {
       if (dueFilter === 'todos') return true;
-      const parcelasAbertas = filteredPagamentos
-        .filter(p => p.aluno_id === alunoId && p.status !== 'pago')
+
+      const method = normalizePaymentMethod(aluno.forma_pagamento);
+      if (method !== 'boleto') return dueFilter === 'quitados';
+
+      const parcelasAbertas = (pagamentosPorAluno[aluno.id] || [])
+        .filter(p => p.status !== 'pago')
         .filter(p => p.data_vencimento)
         .sort((a, b) => String(a.data_vencimento).localeCompare(String(b.data_vencimento)));
 
@@ -340,25 +416,22 @@ export function Financeiro() {
       return true;
     };
 
-    let r = alunos.filter(a => {
-      if (a.produto !== activeTab) return false;
-      if (isAdmin) return true;
-      if (!permissions) return true;
-      return canAccessFinanceiroTurma(permissions, a.turma_id);
-    });
-    if (selectedTurmaId !== 'todas') r = r.filter(a => a.turma_id === selectedTurmaId);
-    if (statusFilter !== 'todos') {
-      if (statusFilter === 'inadimplente') r = r.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente');
-      else r = r.filter(a => a.status === statusFilter);
-    }
+    let r = [...alunosNoEscopo];
     if (paymentFilter !== 'todos') {
       r = r.filter(a => normalizePaymentMethod(a.forma_pagamento) === paymentFilter);
     }
+    if (dueDayFilter !== 'todos') {
+      const selectedDay = Number(dueDayFilter.replace('dia_', ''));
+      r = r.filter(a =>
+        normalizePaymentMethod(a.forma_pagamento) === 'boleto' &&
+        getAlunoDueDay(a, pagamentosPorAluno[a.id] || []) === selectedDay
+      );
+    }
     if (dueFilter !== 'todos') {
-      r = r.filter(a => matchesDueFilter(a.id));
+      r = r.filter(a => matchesDueFilter(a));
     }
     return r;
-  }, [alunos, activeTab, selectedTurmaId, permissions, isAdmin, statusFilter, paymentFilter, dueFilter, inadimplenciaMap, filteredPagamentos]);
+  }, [alunosNoEscopo, paymentFilter, dueDayFilter, dueFilter, pagamentosPorAluno]);
 
   const currentMonth = new Date();
 
@@ -832,11 +905,14 @@ export function Financeiro() {
             <span className="text-xs font-medium text-muted-foreground">Pagamento:</span>
             {([
               { key: 'todos', label: 'Todos' },
-              { key: 'boleto', label: 'Boleto' },
-              { key: 'cartao', label: 'Cartao' },
-              { key: 'avista', label: 'A vista' },
+              { key: 'boleto', label: `Boleto (${paymentCounts.boleto})` },
+              { key: 'cartao', label: `Cartao pago (${paymentCounts.cartao})` },
+              { key: 'avista', label: `A vista pago (${paymentCounts.avista})` },
             ] as { key: PaymentFilter; label: string }[]).map(({ key, label }) => (
-              <button key={key} onClick={() => setPaymentFilter(key)}
+              <button key={key} onClick={() => {
+                setPaymentFilter(key);
+                if (key === 'cartao' || key === 'avista') setDueDayFilter('todos');
+              }}
                 className={`px-3 py-1 rounded text-xs font-medium transition-colors ${paymentFilter === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
                 {label}
               </button>
@@ -844,7 +920,24 @@ export function Financeiro() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">Vencimento:</span>
+            <span className="text-xs font-medium text-muted-foreground">Dia venc.:</span>
+            <button onClick={() => setDueDayFilter('todos')}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${dueDayFilter === 'todos' ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+              Todos
+            </button>
+            {dueDayOptions.map(({ key, day, count }) => (
+              <button key={key} onClick={() => {
+                setDueDayFilter(key);
+                setPaymentFilter('boleto');
+              }}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${dueDayFilter === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                Dia {day} ({count})
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-muted-foreground">Situacao:</span>
             {([
               { key: 'todos', label: 'Todos' },
               { key: 'vencidos', label: 'Vencidos' },
@@ -944,17 +1037,21 @@ export function Financeiro() {
                         </thead>
                         <tbody>
                           {grupo.map(aluno => {
-                            const parcelasAluno = filteredPagamentos
-                              .filter(p => p.aluno_id === aluno.id)
-                              .sort((a, b) => (a.numero_parcela || 0) - (b.numero_parcela || 0));
-                            const total = parcelasAluno.length || aluno.total_mensalidades || turma?.total_mensalidades || paymentMethodTotal(aluno.forma_pagamento);
-                            const pagas = parcelasAluno.filter(p => p.status === 'pago').length;
-                            const abertas = parcelasAluno.filter(p => p.status !== 'pago').sort((a, b) => String(a.data_vencimento).localeCompare(String(b.data_vencimento)));
-                            const proximoVencimento = abertas[0]?.data_vencimento;
+                            const parcelasAluno = pagamentosPorAluno[aluno.id] || [];
                             const method = normalizePaymentMethod(aluno.forma_pagamento);
+                            const dueDay = getAlunoDueDay(aluno, parcelasAluno);
+                            const expectedTotal = paymentMethodTotal(method);
+                            const total = method === 'boleto'
+                              ? (parcelasAluno.length || aluno.total_mensalidades || turma?.total_mensalidades || expectedTotal)
+                              : expectedTotal;
+                            const pagas = method === 'boleto' ? parcelasAluno.filter(p => p.status === 'pago').length : expectedTotal;
+                            const abertas = method === 'boleto'
+                              ? parcelasAluno.filter(p => p.status !== 'pago').sort((a, b) => String(a.data_vencimento).localeCompare(String(b.data_vencimento)))
+                              : [];
+                            const proximoVencimento = abertas[0]?.data_vencimento;
                             const pgBadge: Record<PaymentMethod, string> = { boleto: 'bg-orange-100 text-orange-700', cartao: 'bg-blue-100 text-blue-700', avista: 'bg-green-100 text-green-700' };
 
-                            const inad = inadimplenciaMap[aluno.id];
+                            const inad = method === 'boleto' ? inadimplenciaMap[aluno.id] : undefined;
                             const contratoLabel = aluno.contrato_assinado ? 'Assinado' : aluno.contrato_enviado ? 'Enviado' : aluno.forms_respondido ? 'Forms ok' : 'Pendente';
                             const contratoClass = aluno.contrato_assinado
                               ? 'bg-green-100 text-green-800'
@@ -981,7 +1078,10 @@ export function Financeiro() {
                                 </td>
                                 <td className="py-2.5 px-3 text-muted-foreground text-xs">{turma?.nome || '-'}</td>
                                 <td className="py-2.5 px-3">
-                                  <Badge className={pgBadge[method]}>{paymentLabels[method]}</Badge>
+                                  <div className="flex flex-col gap-1">
+                                    <Badge className={pgBadge[method]}>{method === 'boleto' ? paymentLabels[method] : `${paymentLabels[method]} pago`}</Badge>
+                                    <span className="text-[10px] text-muted-foreground">{method === 'boleto' ? `Dia ${dueDay}` : 'Quitado'}</span>
+                                  </div>
                                 </td>
                                 <td className="py-2.5 px-3">
                                   <div className="flex items-center gap-2">
@@ -1227,7 +1327,7 @@ export function Financeiro() {
               <label className="text-sm font-medium">Dia Vencimento</label>
               <Select value={newAlunoForm.dia_vencimento} onValueChange={v => setNewAlunoForm({ ...newAlunoForm, dia_vencimento: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{[1,5,10,15,20,25,28].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
+                <SelectContent>{[1,5,10,15,20,25,28,30].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
@@ -1381,7 +1481,7 @@ export function Financeiro() {
                       <label className="text-xs text-muted-foreground">Dia vencimento</label>
                       <Select value={String(editAlunoForm.dia_vencimento || 10)} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, dia_vencimento: parseInt(v) })}>
                         <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>{[1,5,10,15,20,25,28].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
+                        <SelectContent>{[1,5,10,15,20,25,28,30].map(d => <SelectItem key={d} value={String(d)}>Dia {d}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
                     <div>
