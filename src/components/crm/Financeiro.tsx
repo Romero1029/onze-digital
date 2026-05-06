@@ -1095,7 +1095,13 @@ export function Financeiro() {
                                   </div>
                                 </td>
                                 <td className="py-2.5 px-3 text-xs text-muted-foreground">
-                                  {proximoVencimento ? safeDate(proximoVencimento) : 'Quitado'}
+                                  {method !== 'boleto'
+                                    ? 'Quitado'
+                                    : parcelasAluno.length === 0
+                                      ? <span className="text-orange-400">Sem parcelas</span>
+                                      : proximoVencimento
+                                        ? safeDate(proximoVencimento)
+                                        : <span className="text-green-600 font-medium">Quitado</span>}
                                 </td>
                                 <td className="py-2.5 px-3">
                                   <Badge className={contratoClass}>{contratoLabel}</Badge>
