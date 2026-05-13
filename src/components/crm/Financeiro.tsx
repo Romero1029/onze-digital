@@ -30,6 +30,13 @@ interface Turma {
   data_fim?: string;
   valor_mensalidade?: number;
   total_mensalidades?: number;
+  responsavel_id?: string;
+  created_at: string;
+}
+
+interface Responsavel {
+  id: string;
+  nome: string;
   created_at: string;
 }
 
@@ -84,7 +91,7 @@ interface Pagamento {
 }
 
 type ProdutoTab = 'psicanalise' | 'numerologia';
-type SubView = 'alunos' | 'turmas';
+type SubView = 'alunos' | 'turmas' | 'responsaveis';
 type PaymentMethod = 'boleto' | 'cartao' | 'avista';
 type PaymentFilter = 'todos' | PaymentMethod;
 type DueFilter = 'todos' | 'vencidos' | 'hoje' | 'proximos_7' | 'proximos_30' | 'quitados';
@@ -297,20 +304,25 @@ export function Financeiro() {
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [bulkMarking, setBulkMarking] = useState(false);
   const [duplicataWarning, setDuplicataWarning] = useState<Aluno | null>(null);
+  const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
+  const [newResponsavelNome, setNewResponsavelNome] = useState('');
+  const [savingResponsavel, setSavingResponsavel] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
-        supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, created_at').order('created_at', { ascending: false }).limit(200),
+      const [turmasRes, alunosRes, pagamentosRes, responsaveisRes] = await Promise.all([
+        supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, responsavel_id, created_at').order('created_at', { ascending: false }).limit(200),
         supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, created_at').order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
+        supabase.from('responsaveis').select('id, nome, created_at').order('nome'),
       ]);
       if (turmasRes.data) setTurmas(turmasRes.data);
       if (alunosRes.data) setAlunos(alunosRes.data);
       if (pagamentosRes.data) setPagamentos(pagamentosRes.data);
+      if (responsaveisRes.data) setResponsaveis(responsaveisRes.data);
     } catch (e) {
       toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao carregar dados' });
     } finally {
@@ -469,6 +481,8 @@ export function Financeiro() {
     const ids = new Set(pagamentosEmFoco.filter(p => p.status === 'pago').map(p => p.aluno_id));
     return ids.size > 0 ? ltvTotal / ids.size : 0;
   }, [ltvTotal, pagamentosEmFoco]);
+  const parcelasEmAberto = useMemo(() => pagamentosEmFoco.filter(p => p.status !== 'pago'), [pagamentosEmFoco]);
+  const valorAReceber = useMemo(() => parcelasEmAberto.reduce((s, p) => s + p.valor, 0), [parcelasEmAberto]);
 
   const inadimplentes = useMemo(() => filteredAlunos.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente'), [filteredAlunos, inadimplenciaMap]);
   const totalEmAtraso = useMemo(() => inadimplentes.reduce((s, a) => s + (inadimplenciaMap[a.id]?.valorEmAtraso || 0), 0), [inadimplentes, inadimplenciaMap]);
@@ -542,6 +556,7 @@ export function Financeiro() {
         data_fim: editTurmaForm.data_fim || null,
         valor_mensalidade: editTurmaForm.valor_mensalidade || null,
         total_mensalidades: editTurmaForm.total_mensalidades || null,
+        responsavel_id: editTurmaForm.responsavel_id || null,
       }).eq('id', turmaToEdit.id);
       if (error) throw error;
       toast({ title: 'Turma atualizada!' });
@@ -562,6 +577,25 @@ export function Financeiro() {
     loadData();
   };
 
+  const createResponsavel = async () => {
+    if (!newResponsavelNome.trim()) return;
+    setSavingResponsavel(true);
+    const { error } = await supabase.from('responsaveis').insert({ nome: newResponsavelNome.trim() });
+    setSavingResponsavel(false);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
+    toast({ title: 'Responsavel adicionado!' });
+    setNewResponsavelNome('');
+    loadData();
+  };
+
+  const deleteResponsavel = async (id: string) => {
+    if (!confirm('Remover responsavel? As turmas ficam sem dono.')) return;
+    const { error } = await supabase.from('responsaveis').delete().eq('id', id);
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
+    toast({ title: 'Responsavel removido!' });
+    loadData();
+  };
+
   const saveInlineTurma = async () => {
     if (!editingTurmaCardId) return;
     setSavingInlineTurma(true);
@@ -571,6 +605,7 @@ export function Financeiro() {
       data_fim: inlineTurmaForm.data_fim || null,
       valor_mensalidade: inlineTurmaForm.valor_mensalidade || null,
       total_mensalidades: inlineTurmaForm.total_mensalidades || null,
+      responsavel_id: inlineTurmaForm.responsavel_id || null,
     }).eq('id', editingTurmaCardId);
     setSavingInlineTurma(false);
     if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
@@ -968,6 +1003,10 @@ export function Financeiro() {
         <button onClick={() => setSubView('turmas')} className={`px-4 py-1.5 rounded-t text-sm font-medium transition-colors ${subView === 'turmas' ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'}`}>
           <Building2 className="h-3.5 w-3.5 inline mr-1" />Turmas
         </button>
+        <button onClick={() => setSubView('responsaveis')} className={`px-4 py-1.5 rounded-t text-sm font-medium transition-colors ${subView === 'responsaveis' ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'}`}>
+          <Users className="h-3.5 w-3.5 inline mr-1" />Por Responsavel
+          {responsaveis.length > 0 && <span className="ml-1.5 bg-primary/20 text-primary rounded-full text-[10px] px-1.5 py-0.5">{responsaveis.length}</span>}
+        </button>
       </div>
 
       {subView === 'alunos' && (
@@ -1112,9 +1151,9 @@ export function Financeiro() {
                 <Card className="p-4 flex items-center gap-3">
                   <div className="p-2 bg-yellow-100 rounded-lg"><TrendingUp className="h-4 w-4 text-yellow-600" /></div>
                   <div>
-                    <p className="text-xs text-muted-foreground">LTV Total</p>
-                    <p className="text-lg font-bold text-yellow-700">{formatCurrency(ltvTotal)}</p>
-                    {ltvMedio > 0 && <p className="text-xs text-muted-foreground">Media: {formatCurrency(ltvMedio)}/aluno</p>}
+                    <p className="text-xs text-muted-foreground">A Receber</p>
+                    <p className="text-lg font-bold text-yellow-700">{formatCurrency(valorAReceber)}</p>
+                    <p className="text-xs text-muted-foreground">{parcelasEmAberto.length} parcela{parcelasEmAberto.length !== 1 ? 's' : ''} em aberto</p>
                   </div>
                 </Card>
                 <Card className="p-4 flex items-center gap-3 border-red-100">
@@ -1361,6 +1400,146 @@ export function Financeiro() {
         </>
       )}
 
+      {subView === 'responsaveis' && (
+        <div className="space-y-4">
+          {/* Adicionar responsavel */}
+          <Card className="p-4">
+            <p className="text-sm font-semibold mb-3">Gerenciar Responsaveis</p>
+            <div className="flex gap-2">
+              <Input
+                placeholder="Nome do responsavel (ex: Joao, Equipe A...)"
+                value={newResponsavelNome}
+                onChange={e => setNewResponsavelNome(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && createResponsavel()}
+                className="max-w-sm"
+              />
+              <Button onClick={createResponsavel} disabled={savingResponsavel || !newResponsavelNome.trim()} className="bg-primary text-white">
+                <Plus className="h-4 w-4 mr-1" />{savingResponsavel ? 'Salvando...' : 'Adicionar'}
+              </Button>
+            </div>
+            {responsaveis.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {responsaveis.map(r => (
+                  <div key={r.id} className="flex items-center gap-1.5 bg-muted px-3 py-1 rounded-full text-sm">
+                    <span>{r.nome}</span>
+                    <button onClick={() => deleteResponsavel(r.id)} className="text-muted-foreground hover:text-destructive ml-1 text-xs">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* Dashboard por responsavel */}
+          {responsaveis.length === 0 ? (
+            <Card className="p-12 text-center">
+              <Users className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">Nenhum responsavel cadastrado ainda.</p>
+              <p className="text-xs text-muted-foreground mt-1">Adicione responsaveis e vincule turmas a eles na aba Turmas.</p>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {responsaveis.map(resp => {
+                const turmasResp = filteredTurmas.filter(t => t.responsavel_id === resp.id);
+                const alunosResp = alunos.filter(a => turmasResp.some(t => t.id === a.turma_id) && a.produto === activeTab);
+                const ativosResp = alunosResp.filter(a => a.status === 'ativo');
+                const pagResp = filteredPagamentos.filter(p => turmasResp.some(t => t.id === p.turma_id));
+                const recebidoResp = pagResp.filter(p => p.status === 'pago').reduce((s, p) => s + p.valor, 0);
+                const aReceberResp = pagResp.filter(p => p.status !== 'pago').reduce((s, p) => s + p.valor, 0);
+                const inadResp = alunosResp.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente');
+                const atrasoResp = inadResp.reduce((s, a) => s + (inadimplenciaMap[a.id]?.valorEmAtraso || 0), 0);
+
+                return (
+                  <Card key={resp.id} className="p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-lg font-bold">{resp.nome}</h3>
+                        <p className="text-xs text-muted-foreground">{turmasResp.length} turma{turmasResp.length !== 1 ? 's' : ''} · {alunosResp.length} aluno{alunosResp.length !== 1 ? 's' : ''}</p>
+                      </div>
+                      {turmasResp.length === 0 && <span className="text-xs text-muted-foreground italic">Nenhuma turma vinculada</span>}
+                    </div>
+
+                    {/* Metricas do responsavel */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                      <div className="bg-green-50 rounded-lg p-3">
+                        <p className="text-xs text-green-700 font-medium">Recebido (total)</p>
+                        <p className="text-base font-bold text-green-700">{formatCurrency(recebidoResp)}</p>
+                      </div>
+                      <div className="bg-yellow-50 rounded-lg p-3">
+                        <p className="text-xs text-yellow-700 font-medium">A Receber</p>
+                        <p className="text-base font-bold text-yellow-700">{formatCurrency(aReceberResp)}</p>
+                        <p className="text-[10px] text-yellow-600">{pagResp.filter(p => p.status !== 'pago').length} parcelas</p>
+                      </div>
+                      <div className="bg-purple-50 rounded-lg p-3">
+                        <p className="text-xs text-purple-700 font-medium">Alunos Ativos</p>
+                        <p className="text-base font-bold text-purple-700">{ativosResp.length}</p>
+                        <p className="text-[10px] text-purple-600">{alunosResp.length} total</p>
+                      </div>
+                      <div className="bg-red-50 rounded-lg p-3">
+                        <p className="text-xs text-red-700 font-medium">Inadimplentes</p>
+                        <p className="text-base font-bold text-red-700">{inadResp.length}</p>
+                        {atrasoResp > 0 && <p className="text-[10px] text-red-600">{formatCurrency(atrasoResp)} em atraso</p>}
+                      </div>
+                    </div>
+
+                    {/* Turmas do responsavel */}
+                    {turmasResp.length > 0 && (
+                      <div className="border-t border-border pt-3">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Turmas</p>
+                        <div className="space-y-2">
+                          {turmasResp.map(t => {
+                            const alunosTurma = alunosResp.filter(a => a.turma_id === t.id);
+                            const ativosTurma = alunosTurma.filter(a => a.status === 'ativo').length;
+                            const pagTurma = filteredPagamentos.filter(p => p.turma_id === t.id);
+                            const recTurma = pagTurma.filter(p => p.status === 'pago').reduce((s, p) => s + p.valor, 0);
+                            const recebTurma = pagTurma.filter(p => p.status !== 'pago').reduce((s, p) => s + p.valor, 0);
+                            const inadTurma = alunosTurma.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente').length;
+                            return (
+                              <div key={t.id} className="flex items-center justify-between bg-muted/30 rounded-lg px-3 py-2 text-sm">
+                                <div className="flex items-center gap-2">
+                                  <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <div>
+                                    <span className="font-medium">{t.nome}</span>
+                                    {t.valor_mensalidade && <span className="text-xs text-muted-foreground ml-1.5">{formatCurrency(t.valor_mensalidade)}/mes</span>}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                  <span><span className="font-medium text-foreground">{alunosTurma.length}</span> alunos ({ativosTurma} ativos)</span>
+                                  <span className="text-green-700 font-medium">{formatCurrency(recTurma)}</span>
+                                  <span className="text-yellow-700">{formatCurrency(recebTurma)} a receber</span>
+                                  {inadTurma > 0 && <span className="text-red-600 font-medium">{inadTurma} inad.</span>}
+                                  <button onClick={() => { setSelectedTurmaId(t.id); setSubView('alunos'); }} className="text-primary hover:underline">Ver alunos</button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+
+              {/* Turmas sem responsavel */}
+              {(() => {
+                const semDono = filteredTurmas.filter(t => !t.responsavel_id);
+                if (semDono.length === 0) return null;
+                return (
+                  <Card className="p-5 border-dashed border-muted-foreground/30">
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-3">{semDono.length} turma{semDono.length !== 1 ? 's' : ''} sem responsavel</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {semDono.map(t => (
+                        <span key={t.id} className="bg-muted text-sm px-3 py-1 rounded-full">{t.nome}</span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">Va em Turmas, edite cada uma e atribua um responsavel.</p>
+                  </Card>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
       {subView === 'turmas' && (
         <div className="space-y-4">
           <div className="flex justify-end">
@@ -1394,7 +1573,7 @@ export function Financeiro() {
                           </>
                         ) : (
                           <>
-                            <Button variant="ghost" size="sm" onClick={() => { setEditingTurmaCardId(turma.id); setInlineTurmaForm({ nome: turma.nome, data_inicio: turma.data_inicio || '', data_fim: turma.data_fim || '', valor_mensalidade: turma.valor_mensalidade, total_mensalidades: turma.total_mensalidades }); }}><Pencil className="h-3.5 w-3.5" /></Button>
+                            <Button variant="ghost" size="sm" onClick={() => { setEditingTurmaCardId(turma.id); setInlineTurmaForm({ nome: turma.nome, data_inicio: turma.data_inicio || '', data_fim: turma.data_fim || '', valor_mensalidade: turma.valor_mensalidade, total_mensalidades: turma.total_mensalidades, responsavel_id: turma.responsavel_id || '' }); }}><Pencil className="h-3.5 w-3.5" /></Button>
                             <Button variant="ghost" size="sm" onClick={() => deleteTurma(turma.id)} className="text-destructive hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>
                           </>
                         )}
@@ -1407,6 +1586,16 @@ export function Financeiro() {
                           <div><label className="text-muted-foreground">Fim</label><Input type="date" value={inlineTurmaForm.data_fim || ''} onChange={e => setInlineTurmaForm(f => ({ ...f, data_fim: e.target.value }))} className="h-7 mt-0.5 text-xs" /></div>
                           <div><label className="text-muted-foreground">Mensalidade (R$)</label><Input type="number" step="0.01" value={inlineTurmaForm.valor_mensalidade ?? ''} onChange={e => setInlineTurmaForm(f => ({ ...f, valor_mensalidade: parseFloat(e.target.value) || undefined }))} className="h-7 mt-0.5 text-xs" /></div>
                           <div><label className="text-muted-foreground">Total Parcelas</label><Input type="number" value={inlineTurmaForm.total_mensalidades ?? ''} onChange={e => setInlineTurmaForm(f => ({ ...f, total_mensalidades: parseInt(e.target.value) || undefined }))} className="h-7 mt-0.5 text-xs" /></div>
+                          <div className="col-span-2">
+                            <label className="text-muted-foreground">Responsavel</label>
+                            <Select value={inlineTurmaForm.responsavel_id || '__none__'} onValueChange={v => setInlineTurmaForm(f => ({ ...f, responsavel_id: v === '__none__' ? '' : v }))}>
+                              <SelectTrigger className="h-7 mt-0.5 text-xs"><SelectValue placeholder="Sem responsavel" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Sem responsavel</SelectItem>
+                                {responsaveis.map(r => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </>
                       ) : (
                         <>
@@ -1414,6 +1603,7 @@ export function Financeiro() {
                           <div className="text-muted-foreground"><span className="font-medium text-foreground">Fim:</span> {safeDate(turma.data_fim) || '-'}</div>
                           <div className="text-muted-foreground"><span className="font-medium text-foreground">Mensalidade:</span> {turma.valor_mensalidade ? formatCurrency(turma.valor_mensalidade) : '-'}</div>
                           <div className="text-muted-foreground"><span className="font-medium text-foreground">Parcelas:</span> {turma.total_mensalidades ?? '-'}</div>
+                          {turma.responsavel_id && <div className="col-span-2 text-muted-foreground"><span className="font-medium text-foreground">Responsavel:</span> {responsaveis.find(r => r.id === turma.responsavel_id)?.nome || '-'}</div>}
                         </>
                       )}
                     </div>
