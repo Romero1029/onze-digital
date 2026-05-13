@@ -223,10 +223,10 @@ const buildInstallments = ({
 };
 
 const statusColors: Record<string, string> = {
-  ativo: 'bg-green-100 text-green-800',
-  inadimplente: 'bg-red-100 text-red-800',
-  cancelado: 'bg-gray-100 text-gray-800',
-  concluido: 'bg-blue-100 text-blue-800',
+  ativo: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  inadimplente: 'bg-red-50 text-red-700 border border-red-200',
+  cancelado: 'bg-zinc-100 text-zinc-600 border border-zinc-200',
+  concluido: 'bg-sky-50 text-sky-700 border border-sky-200',
 };
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -1249,17 +1249,17 @@ export function Financeiro() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="border-b border-border text-muted-foreground">
+                          <tr className="bg-muted/20 border-b border-border/60">
                             <th className="py-2 px-2 w-8"><input type="checkbox" className="cursor-pointer" checked={grupo.length > 0 && grupo.every(a => selectedRows.has(a.id))} onChange={() => { const allSelected = grupo.every(a => selectedRows.has(a.id)); setSelectedRows(prev => { const n = new Set(prev); grupo.forEach(a => allSelected ? n.delete(a.id) : n.add(a.id)); return n; }); }} /></th>
-                            <th className="text-left py-2 px-3 font-medium">Nome</th>
-                            <th className="text-left py-2 px-3 font-medium">WhatsApp</th>
-                            <th className="text-left py-2 px-3 font-medium">Turma</th>
-                            <th className="text-left py-2 px-3 font-medium">Pagamento</th>
-                            <th className="text-left py-2 px-3 font-medium">Parcelas</th>
-                            <th className="text-left py-2 px-3 font-medium">Prox. venc.</th>
-                            <th className="text-left py-2 px-3 font-medium">Contrato</th>
-                            <th className="text-left py-2 px-3 font-medium">Status</th>
-                            <th className="text-left py-2 px-3 font-medium">Acoes</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Nome</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WhatsApp</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Turma</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Pagamento</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Parcelas</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Prox. venc.</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Contrato</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
+                            <th className="text-left py-2 px-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Acoes</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1276,42 +1276,36 @@ export function Financeiro() {
                               ? parcelasAluno.filter(p => p.status !== 'pago').sort((a, b) => String(a.data_vencimento).localeCompare(String(b.data_vencimento)))
                               : [];
                             const proximoVencimento = abertas[0]?.data_vencimento;
-                            const pgBadge: Record<PaymentMethod, string> = { boleto: 'bg-orange-100 text-orange-700', cartao: 'bg-blue-100 text-blue-700', avista: 'bg-green-100 text-green-700' };
+                            const pgBadge: Record<PaymentMethod, string> = { boleto: 'bg-zinc-100 text-zinc-700 border border-zinc-200', cartao: 'bg-blue-50 text-blue-600 border border-blue-200', avista: 'bg-emerald-50 text-emerald-700 border border-emerald-200' };
 
                             const inad = method === 'boleto' ? inadimplenciaMap[aluno.id] : undefined;
                             const contratoLabel = aluno.contrato_assinado ? 'Assinado' : aluno.contrato_enviado ? 'Enviado' : aluno.forms_respondido ? 'Forms ok' : 'Pendente';
                             const contratoClass = aluno.contrato_assinado
-                              ? 'bg-green-100 text-green-800'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : aluno.contrato_enviado
-                                ? 'bg-yellow-100 text-yellow-800'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                 : aluno.forms_respondido
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : 'bg-gray-100 text-gray-700';
+                                  ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                  : 'bg-zinc-100 text-zinc-500 border border-zinc-200';
                             const hoje2 = parseDateOnly(todayDateInput())!;
                             const urgDot = (() => {
-                              if (method !== 'boleto') return { cls: 'bg-gray-200', tip: 'Quitado' };
-                              if (abertas.length === 0) return { cls: 'bg-green-400', tip: 'Quitado' };
-                              if (!proximoVencimento) return { cls: 'bg-gray-300', tip: '-' };
-                              const v = parseDateOnly(proximoVencimento); if (!v) return { cls: 'bg-gray-300', tip: '-' };
+                              if (method !== 'boleto') return { cls: 'bg-zinc-300', tip: 'Quitado' };
+                              if (abertas.length === 0) return { cls: 'bg-emerald-500', tip: 'Quitado' };
+                              if (!proximoVencimento) return { cls: 'bg-zinc-400', tip: '-' };
+                              const v = parseDateOnly(proximoVencimento); if (!v) return { cls: 'bg-zinc-400', tip: '-' };
                               const diff = Math.floor((v.getTime() - hoje2.getTime()) / (1000*60*60*24));
-                              if (diff < 0) return { cls: 'bg-red-500', tip: `Vencido há ${Math.abs(diff)}d` };
-                              if (diff === 0) return { cls: 'bg-red-400', tip: 'Vence hoje!' };
-                              if (diff <= 7) return { cls: `bg-orange-400`, tip: `Vence em ${diff}d` };
-                              return { cls: 'bg-green-400', tip: `Vence em ${diff}d` };
+                              if (diff < 0) return { cls: 'bg-red-600 ring-2 ring-red-200', tip: `Vencido há ${Math.abs(diff)}d` };
+                              if (diff === 0) return { cls: 'bg-red-500 ring-2 ring-red-200', tip: 'Vence hoje!' };
+                              if (diff <= 7) return { cls: 'bg-amber-500 ring-2 ring-amber-100', tip: `Vence em ${diff}d` };
+                              return { cls: 'bg-emerald-500', tip: `Vence em ${diff}d` };
                             })();
                             return (
-                              <tr key={aluno.id} className={`border-b border-border/40 hover:bg-muted/40 ${selectedRows.has(aluno.id) ? 'bg-primary/5' : inad ? 'bg-red-50/40' : ''}`}>
+                              <tr key={aluno.id} className={`border-b border-border/30 transition-colors ${selectedRows.has(aluno.id) ? 'bg-primary/5' : inad ? 'bg-red-50/60 border-l-[3px] border-l-red-400' : 'hover:bg-muted/25'}`}>
                                 <td className="py-2.5 px-2"><input type="checkbox" className="cursor-pointer" checked={selectedRows.has(aluno.id)} onChange={() => toggleRowSelection(aluno.id)} /></td>
                                 <td className="py-2.5 px-3 font-medium">
                                   <div className="flex items-center gap-1.5">
-                                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${urgDot.cls}`} title={urgDot.tip} />
-                                    {aluno.nome}
-                                    {aluno.contrato_assinado
-                                      ? <span title="Contrato assinado" className="text-green-600 text-[10px] font-bold">-</span>
-                                      : aluno.contrato_enviado
-                                        ? <span title="Contrato enviado, aguardando assinatura" className="text-yellow-500 text-[10px] font-bold">-</span>
-                                        : <span title="Sem contrato" className="text-gray-300 text-[10px]">-</span>
-                                    }
+                                    <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${urgDot.cls}`} title={urgDot.tip} />
+                                    <span className="font-medium text-foreground">{aluno.nome}</span>
                                   </div>
                                   {aluno.observacoes && (
                                     <p className="text-[11px] text-muted-foreground font-normal mt-0.5 leading-tight max-w-[180px] truncate" title={aluno.observacoes}>
@@ -1369,12 +1363,16 @@ export function Financeiro() {
                                 </td>
                                 <td className="py-2.5 px-3">
                                   <div className="flex flex-col gap-1">
-                                    <Badge className={inad ? 'bg-red-100 text-red-800' : statusColors[aluno.status] || 'bg-gray-100 text-gray-800'}>
+                                    <Badge className={inad ? 'bg-red-50 text-red-700 border border-red-200' : statusColors[aluno.status] || 'bg-zinc-100 text-zinc-600 border border-zinc-200'}>
                                       {inad ? 'inadimplente' : aluno.status}
                                     </Badge>
                                     {inad && (
-                                      <span className="text-[10px] text-red-600 font-medium leading-tight">
-                                        {inad.parcelasAtrasadas}x - {inad.diasAtraso}d - {formatCurrency(inad.valorEmAtraso)}
+                                      <span className="text-[10px] text-red-600 font-medium leading-tight mt-0.5 flex items-center gap-1">
+                                        <span>{inad.parcelasAtrasadas}p</span>
+                                        <span className="text-red-300">·</span>
+                                        <span>{inad.diasAtraso}d</span>
+                                        <span className="text-red-300">·</span>
+                                        <span>{formatCurrency(inad.valorEmAtraso)}</span>
                                       </span>
                                     )}
                                   </div>
