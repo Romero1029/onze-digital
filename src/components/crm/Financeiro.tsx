@@ -15,7 +15,8 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/ui/use-toast';
 import {
   Plus, DollarSign, Users, AlertCircle, Eye, Trash2,
-  TrendingUp, Target, Phone, Pencil, Building2, CheckCircle2
+  TrendingUp, Target, Phone, Pencil, Building2, CheckCircle2,
+  Copy, Download,
 } from 'lucide-react';
 import { format, isSameMonth, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -290,6 +291,12 @@ export function Financeiro() {
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('todos');
   const [dueDayFilter, setDueDayFilter] = useState<DueDayFilter>('todos');
   const [dueFilter, setDueFilter] = useState<DueFilter>('todos');
+  const [showFiltrosAvancados, setShowFiltrosAvancados] = useState(false);
+  const [searchAluno, setSearchAluno] = useState('');
+  const [assigningTurma, setAssigningTurma] = useState<Record<string, boolean>>({});
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [bulkMarking, setBulkMarking] = useState(false);
+  const [duplicataWarning, setDuplicataWarning] = useState<Aluno | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -450,25 +457,46 @@ export function Financeiro() {
     } catch { return false; }
   };
 
-  const receitaMes = useMemo(() => filteredPagamentos.filter(p => p.status === 'pago' && periodoFilter(p.data_pagamento)).reduce((s, p) => s + p.valor, 0), [filteredPagamentos, periodo]);
-  const previstoMes = useMemo(() => filteredPagamentos.filter(p => periodoFilter(p.data_vencimento)).reduce((s, p) => s + p.valor, 0), [filteredPagamentos, periodo]);
+  const pagamentosEmFoco = useMemo(() => {
+    if (selectedTurmaId === 'todas') return filteredPagamentos;
+    return filteredPagamentos.filter(p => p.turma_id === selectedTurmaId);
+  }, [filteredPagamentos, selectedTurmaId]);
+
+  const receitaMes = useMemo(() => pagamentosEmFoco.filter(p => p.status === 'pago' && periodoFilter(p.data_pagamento)).reduce((s, p) => s + p.valor, 0), [pagamentosEmFoco, periodo]);
+  const previstoMes = useMemo(() => pagamentosEmFoco.filter(p => periodoFilter(p.data_vencimento)).reduce((s, p) => s + p.valor, 0), [pagamentosEmFoco, periodo]);
+  const ltvTotal = useMemo(() => pagamentosEmFoco.filter(p => p.status === 'pago').reduce((s, p) => s + p.valor, 0), [pagamentosEmFoco]);
+  const ltvMedio = useMemo(() => {
+    const ids = new Set(pagamentosEmFoco.filter(p => p.status === 'pago').map(p => p.aluno_id));
+    return ids.size > 0 ? ltvTotal / ids.size : 0;
+  }, [ltvTotal, pagamentosEmFoco]);
 
   const inadimplentes = useMemo(() => filteredAlunos.filter(a => inadimplenciaMap[a.id] || a.status === 'inadimplente'), [filteredAlunos, inadimplenciaMap]);
-  const totalEmAtraso = useMemo(() => Object.values(inadimplenciaMap).reduce((s, v) => s + v.valorEmAtraso, 0), [inadimplenciaMap]);
+  const totalEmAtraso = useMemo(() => inadimplentes.reduce((s, a) => s + (inadimplenciaMap[a.id]?.valorEmAtraso || 0), 0), [inadimplentes, inadimplenciaMap]);
   const contratosPendentes = useMemo(() => filteredAlunos.filter(a => !a.contrato_assinado && a.status === 'ativo').length, [filteredAlunos]);
+  const alunosSemTurma = useMemo(() => alunos.filter(a => a.produto === activeTab && !a.turma_id), [alunos, activeTab]);
 
   // Agrupar alunos por turma
+  const alunosVisiveis = useMemo(() => {
+    if (!searchAluno.trim()) return filteredAlunos;
+    const q = searchAluno.toLowerCase();
+    return filteredAlunos.filter(a =>
+      a.nome.toLowerCase().includes(q) ||
+      (a.whatsapp || '').includes(q) ||
+      (a.email || '').toLowerCase().includes(q)
+    );
+  }, [filteredAlunos, searchAluno]);
+
   const alunosPorTurma = useMemo(() => {
     const groups: Record<string, Aluno[]> = {};
-    filteredAlunos.forEach(a => {
+    alunosVisiveis.forEach(a => {
       const key = a.turma_id || '__sem_turma__';
       if (!groups[key]) groups[key] = [];
       groups[key].push(a);
     });
-    // Sort: turmas first (by nome), sem_turma last
+    // Sort: sem_turma first (needs attention), then turmas by name
     return Object.entries(groups).sort(([a], [b]) => {
-      if (a === '__sem_turma__') return 1;
-      if (b === '__sem_turma__') return -1;
+      if (a === '__sem_turma__') return -1;
+      if (b === '__sem_turma__') return 1;
       const ta = turmas.find(t => t.id === a)?.nome || '';
       const tb = turmas.find(t => t.id === b)?.nome || '';
       return ta.localeCompare(tb);
@@ -639,8 +667,16 @@ export function Financeiro() {
     if (error) throw error;
   };
 
-  const createAluno = async () => {
+  const createAluno = async (forceCreate = false) => {
     if (!newAlunoForm.nome.trim() || !newAlunoForm.turma_id) return;
+    if (!forceCreate) {
+      const wNum = newAlunoForm.whatsapp.replace(/\D/g, '');
+      const dup = alunos.find(a =>
+        (newAlunoForm.email.trim() && a.email?.toLowerCase() === newAlunoForm.email.trim().toLowerCase()) ||
+        (wNum && a.whatsapp?.replace(/\D/g, '') === wNum)
+      );
+      if (dup) { setDuplicataWarning(dup); return; }
+    }
     try {
       const method = normalizePaymentMethod(newAlunoForm.forma_pagamento);
       const diaVenc = extractDueDay(newAlunoForm.dia_vencimento);
@@ -826,6 +862,69 @@ export function Financeiro() {
     loadData();
   };
 
+  const toggleRowSelection = (id: string) => setSelectedRows(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAllRows = () => setSelectedRows(prev => prev.size === alunosVisiveis.length ? new Set() : new Set(alunosVisiveis.map(a => a.id)));
+
+  const marcarPagoEmMassa = async () => {
+    setBulkMarking(true);
+    const hoje = todayDateInput();
+    let count = 0;
+    for (const alunoId of Array.from(selectedRows)) {
+      const proxima = (pagamentosPorAluno[alunoId] || []).filter(p => p.status !== 'pago').sort((a, b) => (a.numero_parcela || 0) - (b.numero_parcela || 0))[0];
+      if (proxima) {
+        const { error } = await supabase.from('pagamentos').update({ status: 'pago', data_pagamento: hoje }).eq('id', proxima.id);
+        if (!error) { await atualizarContadoresAluno(alunoId); count++; }
+      }
+    }
+    setBulkMarking(false);
+    setSelectedRows(new Set());
+    toast({ title: `${count} pagamento${count !== 1 ? 's' : ''} confirmado${count !== 1 ? 's' : ''}!` });
+    loadData();
+  };
+
+  const copiarMensagem = (aluno: Aluno) => {
+    const parcelas = (pagamentosPorAluno[aluno.id] || []).filter(p => p.status !== 'pago').sort((a, b) => (a.numero_parcela || 0) - (b.numero_parcela || 0));
+    if (!parcelas.length) { toast({ title: 'Sem parcelas em aberto' }); return; }
+    const proxima = parcelas[0];
+    const total = (pagamentosPorAluno[aluno.id] || []).length;
+    const nome = aluno.nome.split(' ')[0];
+    const valor = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(proxima.valor);
+    const venc = proxima.data_vencimento ? (() => { try { const [y,m,d] = proxima.data_vencimento.split('T')[0].split('-'); return `${d}/${m}/${y}`; } catch { return proxima.data_vencimento; } })() : '-';
+    const msg = `Olá ${nome}! 😊\n\nTemos a parcela ${proxima.numero_parcela}/${total} do seu curso no valor de ${valor} com vencimento em ${venc} aguardando pagamento.\n\nRegularize para manter seu acesso em dia. Qualquer dúvida, estou aqui! 🙏`;
+    navigator.clipboard.writeText(msg);
+    toast({ title: 'Mensagem copiada!' });
+  };
+
+  const exportarCSV = () => {
+    const headers = ['Nome', 'WhatsApp', 'Email', 'Turma', 'Pagamento', 'Parcelas pagas', 'Total parcelas', 'Prox. vencimento', 'Status', 'Em atraso (R$)'];
+    const hoje = parseDateOnly(todayDateInput())!;
+    const rows = alunosVisiveis.map(aluno => {
+      const turma = turmas.find(t => t.id === aluno.turma_id);
+      const method = normalizePaymentMethod(aluno.forma_pagamento);
+      const parcs = pagamentosPorAluno[aluno.id] || [];
+      const pagas = parcs.filter(p => p.status === 'pago').length;
+      const total = parcs.length;
+      const abertas = parcs.filter(p => p.status !== 'pago').sort((a, b) => String(a.data_vencimento).localeCompare(String(b.data_vencimento)));
+      const proxVencStr = method !== 'boleto' ? 'Quitado' : abertas[0]?.data_vencimento ? (() => { try { const [y,m,d] = abertas[0].data_vencimento.split('T')[0].split('-'); return `${d}/${m}/${y}`; } catch { return abertas[0].data_vencimento; } })() : 'Sem parcelas';
+      const inad = inadimplenciaMap[aluno.id];
+      return [aluno.nome, aluno.whatsapp || '', aluno.email || '', turma?.nome || 'Sem turma', method, pagas, total, proxVencStr, inad ? 'inadimplente' : aluno.status, inad ? inad.valorEmAtraso.toFixed(2) : ''];
+    });
+    const csv = [headers, ...rows].map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `alunos_${activeTab}_${todayDateInput()}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const quickAssignTurma = async (alunoId: string, turmaId: string) => {
+    setAssigningTurma(prev => ({ ...prev, [alunoId]: true }));
+    const { error } = await supabase.from('alunos').update({ turma_id: turmaId }).eq('id', alunoId);
+    setAssigningTurma(prev => ({ ...prev, [alunoId]: false }));
+    if (error) { toast({ variant: 'destructive', title: 'Erro', description: error.message }); return; }
+    toast({ title: 'Turma atribuida!' });
+    loadData();
+  };
+
   const abrirPagoDialog = (pagamentoId: string, alunoId: string) => {
     const hoje = todayDateInput();
     setPagoInfo({ pagamentoId, alunoId, data: hoje });
@@ -873,131 +972,214 @@ export function Financeiro() {
 
       {subView === 'alunos' && (
         <>
-          {/* Filtro de periodo */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">Periodo:</span>
-            {Object.entries(periodoLabel).map(([key, label]) => (
-              <button key={key} onClick={() => setPeriodo(key)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${periodo === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                {label}
+          {/* Banner alunos sem turma */}
+          {alunosSemTurma.length > 0 && (
+            <div className="flex items-center gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium text-amber-800">{alunosSemTurma.length} aluno{alunosSemTurma.length !== 1 ? 's' : ''} sem turma atribuida</span>
+                <span className="text-xs text-amber-600 ml-2 hidden sm:inline">Responderam o formulario mas ainda nao foram alocados.</span>
+              </div>
+              <button
+                onClick={() => { setStatusFilter('todos'); setPaymentFilter('todos'); setDueDayFilter('todos'); setDueFilter('todos'); setSelectedTurmaId('todas'); }}
+                className="text-xs text-amber-700 font-semibold hover:text-amber-900 whitespace-nowrap">
+                Ver na lista ↓
               </button>
-            ))}
-          </div>
+            </div>
+          )}
 
-          {/* Filtro de status */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">Status:</span>
-            {([
-              { key: 'todos', label: 'Todos', color: 'bg-muted text-muted-foreground', active: 'bg-gray-700 text-white' },
-              { key: 'ativo', label: 'Ativos', color: 'bg-muted text-muted-foreground', active: 'bg-green-600 text-white' },
-              { key: 'inadimplente', label: `Inadimplentes (${inadimplentes.length})`, color: 'bg-muted text-muted-foreground', active: 'bg-red-600 text-white' },
-              { key: 'cancelado', label: 'Cancelados', color: 'bg-muted text-muted-foreground', active: 'bg-gray-500 text-white' },
-            ] as { key: typeof statusFilter; label: string; color: string; active: string }[]).map(({ key, label, color, active }) => (
-              <button key={key} onClick={() => setStatusFilter(key)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${statusFilter === key ? active : color + ' hover:bg-muted/70'}`}>
-                {label}
-              </button>
-            ))}
-          </div>
+          {/* Filtros */}
+          <div className="space-y-2">
+            {/* Periodo */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-14 shrink-0">Periodo:</span>
+              {Object.entries(periodoLabel).map(([key, label]) => (
+                <button key={key} onClick={() => setPeriodo(key)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${periodo === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
 
-          {/* Filtros financeiros */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">Pagamento:</span>
-            {([
-              { key: 'todos', label: 'Todos' },
-              { key: 'boleto', label: `Boleto (${paymentCounts.boleto})` },
-              { key: 'cartao', label: `Cartao pago (${paymentCounts.cartao})` },
-              { key: 'avista', label: `A vista pago (${paymentCounts.avista})` },
-            ] as { key: PaymentFilter; label: string }[]).map(({ key, label }) => (
-              <button key={key} onClick={() => {
-                setPaymentFilter(key);
-                if (key === 'cartao' || key === 'avista') setDueDayFilter('todos');
-              }}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${paymentFilter === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                {label}
+            {/* Status + botao filtros avancados */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-14 shrink-0">Status:</span>
+              {([
+                { key: 'todos', label: 'Todos', active: 'bg-gray-700 text-white' },
+                { key: 'ativo', label: 'Ativos', active: 'bg-green-600 text-white' },
+                { key: 'inadimplente', label: `Inadimplentes (${inadimplentes.length})`, active: 'bg-red-600 text-white' },
+                { key: 'cancelado', label: 'Cancelados', active: 'bg-gray-500 text-white' },
+              ] as { key: typeof statusFilter; label: string; active: string }[]).map(({ key, label, active }) => (
+                <button key={key} onClick={() => setStatusFilter(key)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${statusFilter === key ? active : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                  {label}
+                </button>
+              ))}
+              <button
+                onClick={() => setShowFiltrosAvancados(f => !f)}
+                className={`ml-auto flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium border transition-colors ${
+                  paymentFilter !== 'todos' || dueDayFilter !== 'todos' || dueFilter !== 'todos'
+                    ? 'bg-primary/10 text-primary border-primary/30'
+                    : 'border-border text-muted-foreground hover:bg-muted/50'
+                }`}>
+                Filtros
+                {(paymentFilter !== 'todos' || dueDayFilter !== 'todos' || dueFilter !== 'todos') && (
+                  <span className="bg-primary text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
+                    {[paymentFilter !== 'todos', dueDayFilter !== 'todos', dueFilter !== 'todos'].filter(Boolean).length}
+                  </span>
+                )}
+                <span className="text-[10px]">{showFiltrosAvancados ? '▲' : '▼'}</span>
               </button>
-            ))}
-          </div>
+            </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">Dia venc.:</span>
-            <button onClick={() => setDueDayFilter('todos')}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${dueDayFilter === 'todos' ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-              Todos
-            </button>
-            {dueDayOptions.map(({ key, day, count }) => (
-              <button key={key} onClick={() => {
-                setDueDayFilter(key);
-                setPaymentFilter('boleto');
-              }}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${dueDayFilter === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                Dia {day} ({count})
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">Situacao:</span>
-            {([
-              { key: 'todos', label: 'Todos' },
-              { key: 'vencidos', label: 'Vencidos' },
-              { key: 'hoje', label: 'Hoje' },
-              { key: 'proximos_7', label: '7 dias' },
-              { key: 'proximos_30', label: '30 dias' },
-              { key: 'quitados', label: 'Quitados' },
-            ] as { key: DueFilter; label: string }[]).map(({ key, label }) => (
-              <button key={key} onClick={() => setDueFilter(key)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${dueFilter === key ? 'bg-primary text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                {label}
-              </button>
-            ))}
+            {/* Filtros avancados */}
+            {showFiltrosAvancados && (
+              <div className="bg-muted/30 border border-border/60 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">Pagamento:</span>
+                  {([
+                    { key: 'todos', label: 'Todos' },
+                    { key: 'boleto', label: `Boleto (${paymentCounts.boleto})` },
+                    { key: 'cartao', label: `Cartao (${paymentCounts.cartao})` },
+                    { key: 'avista', label: `A vista (${paymentCounts.avista})` },
+                  ] as { key: PaymentFilter; label: string }[]).map(({ key, label }) => (
+                    <button key={key} onClick={() => { setPaymentFilter(key); if (key === 'cartao' || key === 'avista') setDueDayFilter('todos'); }}
+                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${paymentFilter === key ? 'bg-primary text-white' : 'bg-white border border-border text-muted-foreground hover:bg-muted/40'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">Dia venc.:</span>
+                  <button onClick={() => setDueDayFilter('todos')}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${dueDayFilter === 'todos' ? 'bg-primary text-white' : 'bg-white border border-border text-muted-foreground hover:bg-muted/40'}`}>
+                    Todos
+                  </button>
+                  {dueDayOptions.map(({ key, day, count }) => (
+                    <button key={key} onClick={() => { setDueDayFilter(key); setPaymentFilter('boleto'); }}
+                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${dueDayFilter === key ? 'bg-primary text-white' : 'bg-white border border-border text-muted-foreground hover:bg-muted/40'}`}>
+                      Dia {day} ({count})
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">Situacao:</span>
+                  {([
+                    { key: 'todos', label: 'Todos' },
+                    { key: 'vencidos', label: 'Vencidos' },
+                    { key: 'hoje', label: 'Hoje' },
+                    { key: 'proximos_7', label: '7 dias' },
+                    { key: 'proximos_30', label: '30 dias' },
+                    { key: 'quitados', label: 'Quitados' },
+                  ] as { key: DueFilter; label: string }[]).map(({ key, label }) => (
+                    <button key={key} onClick={() => setDueFilter(key)}
+                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${dueFilter === key ? 'bg-primary text-white' : 'bg-white border border-border text-muted-foreground hover:bg-muted/40'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {(paymentFilter !== 'todos' || dueDayFilter !== 'todos' || dueFilter !== 'todos') && (
+                  <button
+                    onClick={() => { setPaymentFilter('todos'); setDueDayFilter('todos'); setDueFilter('todos'); }}
+                    className="text-xs text-red-600 hover:text-red-800 font-medium">
+                    Limpar filtros avancados
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Cards resumo */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card className="p-4 flex items-center gap-3">
-              <div className="p-2 bg-green-100 rounded-lg"><DollarSign className="h-4 w-4 text-green-600" /></div>
-              <div><p className="text-xs text-muted-foreground">Recebido - {periodoLabel[periodo]}</p><p className="text-lg font-bold text-green-600">{formatCurrency(receitaMes)}</p></div>
-            </Card>
-            <Card className="p-4 flex items-center gap-3">
-              <div className="p-2 bg-blue-100 rounded-lg"><Target className="h-4 w-4 text-blue-600" /></div>
-              <div><p className="text-xs text-muted-foreground">Previsto - {periodoLabel[periodo]}</p><p className="text-lg font-bold text-blue-600">{formatCurrency(previstoMes)}</p></div>
-            </Card>
-            <Card className="p-4 flex items-center gap-3 border-red-100">
-              <div className="p-2 bg-red-100 rounded-lg"><AlertCircle className="h-4 w-4 text-red-600" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Inadimplentes</p>
-                <p className="text-lg font-bold text-red-600">{inadimplentes.length}</p>
-                {totalEmAtraso > 0 && <p className="text-xs text-red-500 font-medium">{formatCurrency(totalEmAtraso)} em atraso</p>}
+          {(() => {
+            const turmaAtiva = selectedTurmaId !== 'todas' ? filteredTurmas.find(t => t.id === selectedTurmaId) : null;
+            const contexto = turmaAtiva ? turmaAtiva.nome : periodoLabel[periodo];
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <Card className="p-4 flex items-center gap-3">
+                  <div className="p-2 bg-green-100 rounded-lg"><DollarSign className="h-4 w-4 text-green-600" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground truncate max-w-[120px]" title={`Recebido - ${contexto}`}>Recebido - {contexto}</p>
+                    <p className="text-lg font-bold text-green-600">{formatCurrency(receitaMes)}</p>
+                  </div>
+                </Card>
+                <Card className="p-4 flex items-center gap-3">
+                  <div className="p-2 bg-blue-100 rounded-lg"><Target className="h-4 w-4 text-blue-600" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground truncate max-w-[120px]" title={`Previsto - ${contexto}`}>Previsto - {contexto}</p>
+                    <p className="text-lg font-bold text-blue-600">{formatCurrency(previstoMes)}</p>
+                  </div>
+                </Card>
+                <Card className="p-4 flex items-center gap-3">
+                  <div className="p-2 bg-yellow-100 rounded-lg"><TrendingUp className="h-4 w-4 text-yellow-600" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">LTV Total</p>
+                    <p className="text-lg font-bold text-yellow-700">{formatCurrency(ltvTotal)}</p>
+                    {ltvMedio > 0 && <p className="text-xs text-muted-foreground">Media: {formatCurrency(ltvMedio)}/aluno</p>}
+                  </div>
+                </Card>
+                <Card className="p-4 flex items-center gap-3 border-red-100">
+                  <div className="p-2 bg-red-100 rounded-lg"><AlertCircle className="h-4 w-4 text-red-600" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Inadimplentes</p>
+                    <p className="text-lg font-bold text-red-600">{inadimplentes.length}</p>
+                    {totalEmAtraso > 0 && <p className="text-xs text-red-500 font-medium">{formatCurrency(totalEmAtraso)} em atraso</p>}
+                  </div>
+                </Card>
+                <Card className="p-4 flex items-center gap-3">
+                  <div className="p-2 bg-purple-100 rounded-lg"><Users className="h-4 w-4 text-purple-600" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Alunos Ativos</p>
+                    <p className="text-lg font-bold text-purple-600">{filteredAlunos.filter(a => a.status === 'ativo').length}</p>
+                    <p className="text-xs text-muted-foreground">{contratosPendentes > 0 ? `${contratosPendentes} sem contrato` : 'Todos c/ contrato'}</p>
+                  </div>
+                </Card>
+              </div>
+            );
+          })()}
+
+          {/* Filtro turma + busca */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Card className="p-3 flex-1">
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium whitespace-nowrap">Turma:</label>
+                <Select value={selectedTurmaId} onValueChange={setSelectedTurmaId}>
+                  <SelectTrigger className="max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas as turmas</SelectItem>
+                    {filteredTurmas.map(t => (
+                      <SelectItem key={t.id} value={t.id}>{t.nome} ({alunos.filter(a => a.turma_id === t.id).length} alunos)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </Card>
-            <Card className="p-4 flex items-center gap-3">
-              <div className="p-2 bg-purple-100 rounded-lg"><TrendingUp className="h-4 w-4 text-purple-600" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Alunos Ativos</p>
-                <p className="text-lg font-bold text-purple-600">{filteredAlunos.filter(a => a.status === 'ativo').length}</p>
-                <p className="text-xs text-muted-foreground">{contratosPendentes > 0 ? `${contratosPendentes} sem contrato` : 'Todos c/ contrato'}</p>
-              </div>
+            <Card className="p-3 flex-1 flex items-center gap-2">
+              <Input
+                placeholder="Buscar por nome, WhatsApp ou email..."
+                value={searchAluno}
+                onChange={e => setSearchAluno(e.target.value)}
+                className="border-0 shadow-none p-0 h-auto text-sm focus-visible:ring-0 flex-1"
+              />
+              <Button variant="ghost" size="sm" onClick={exportarCSV} title="Exportar lista como CSV" className="shrink-0 h-7 px-2 text-muted-foreground hover:text-foreground">
+                <Download className="h-4 w-4 mr-1" /><span className="text-xs">CSV</span>
+              </Button>
             </Card>
           </div>
 
-          {/* Filtro turma */}
-          <Card className="p-3">
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium whitespace-nowrap">Turma:</label>
-              <Select value={selectedTurmaId} onValueChange={setSelectedTurmaId}>
-                <SelectTrigger className="max-w-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todas">Todas as turmas</SelectItem>
-                  {filteredTurmas.map(t => (
-                    <SelectItem key={t.id} value={t.id}>{t.nome} ({alunos.filter(a => a.turma_id === t.id).length} alunos)</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          {/* Barra flutuante de acao em massa */}
+          {selectedRows.size > 0 && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white px-5 py-3 rounded-full shadow-2xl">
+              <span className="text-sm font-medium">{selectedRows.size} selecionado{selectedRows.size !== 1 ? 's' : ''}</span>
+              <button onClick={marcarPagoEmMassa} disabled={bulkMarking}
+                className="flex items-center gap-1.5 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white px-4 py-1.5 rounded-full text-sm font-semibold transition-colors">
+                <CheckCircle2 className="h-4 w-4" />
+                {bulkMarking ? 'Processando...' : 'Marcar proxima parcela como paga'}
+              </button>
+              <button onClick={() => setSelectedRows(new Set())} className="text-gray-400 hover:text-white text-sm">Cancelar</button>
             </div>
-          </Card>
+          )}
 
           {/* Alunos agrupados por turma */}
           {filteredAlunos.length === 0 ? (
@@ -1010,20 +1192,26 @@ export function Financeiro() {
             <div className="space-y-4">
               {alunosPorTurma.map(([turmaId, grupo]) => {
                 const turma = turmas.find(t => t.id === turmaId);
-                const turmaLabel = turmaId === '__sem_turma__' ? 'Sem turma' : (turma?.nome || turmaId);
+                const isSemTurma = turmaId === '__sem_turma__';
+                const turmaLabel = isSemTurma ? 'Aguardando atribuicao de turma' : (turma?.nome || turmaId);
                 return (
-                  <Card key={turmaId} className="p-5">
+                  <Card key={turmaId} className={`p-5 ${isSemTurma ? 'border-amber-300 bg-amber-50/30' : ''}`}>
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-bold flex items-center gap-2">
-                        <Building2 className="h-4 w-4 text-primary" />{turmaLabel}
+                      <h3 className={`font-bold flex items-center gap-2 ${isSemTurma ? 'text-amber-800' : ''}`}>
+                        {isSemTurma
+                          ? <AlertCircle className="h-4 w-4 text-amber-600" />
+                          : <Building2 className="h-4 w-4 text-primary" />}
+                        {turmaLabel}
                         {turma?.valor_mensalidade && <span className="text-xs font-normal text-muted-foreground ml-1">- {formatCurrency(turma.valor_mensalidade)}/mes</span>}
+                        {isSemTurma && <span className="text-xs font-normal text-amber-600 ml-1">— Abra o detalhe para atribuir uma turma</span>}
                       </h3>
-                      <Badge variant="secondary">{grupo.length} aluno{grupo.length !== 1 ? 's' : ''}</Badge>
+                      <Badge variant="secondary" className={isSemTurma ? 'bg-amber-100 text-amber-800 border-amber-200' : ''}>{grupo.length} aluno{grupo.length !== 1 ? 's' : ''}</Badge>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-border text-muted-foreground">
+                            <th className="py-2 px-2 w-8"><input type="checkbox" className="cursor-pointer" checked={grupo.length > 0 && grupo.every(a => selectedRows.has(a.id))} onChange={() => { const allSelected = grupo.every(a => selectedRows.has(a.id)); setSelectedRows(prev => { const n = new Set(prev); grupo.forEach(a => allSelected ? n.delete(a.id) : n.add(a.id)); return n; }); }} /></th>
                             <th className="text-left py-2 px-3 font-medium">Nome</th>
                             <th className="text-left py-2 px-3 font-medium">WhatsApp</th>
                             <th className="text-left py-2 px-3 font-medium">Turma</th>
@@ -1060,10 +1248,24 @@ export function Financeiro() {
                                 : aluno.forms_respondido
                                   ? 'bg-blue-100 text-blue-800'
                                   : 'bg-gray-100 text-gray-700';
+                            const hoje2 = parseDateOnly(todayDateInput())!;
+                            const urgDot = (() => {
+                              if (method !== 'boleto') return { cls: 'bg-gray-200', tip: 'Quitado' };
+                              if (abertas.length === 0) return { cls: 'bg-green-400', tip: 'Quitado' };
+                              if (!proximoVencimento) return { cls: 'bg-gray-300', tip: '-' };
+                              const v = parseDateOnly(proximoVencimento); if (!v) return { cls: 'bg-gray-300', tip: '-' };
+                              const diff = Math.floor((v.getTime() - hoje2.getTime()) / (1000*60*60*24));
+                              if (diff < 0) return { cls: 'bg-red-500', tip: `Vencido há ${Math.abs(diff)}d` };
+                              if (diff === 0) return { cls: 'bg-red-400', tip: 'Vence hoje!' };
+                              if (diff <= 7) return { cls: `bg-orange-400`, tip: `Vence em ${diff}d` };
+                              return { cls: 'bg-green-400', tip: `Vence em ${diff}d` };
+                            })();
                             return (
-                              <tr key={aluno.id} className={`border-b border-border/40 hover:bg-muted/40 ${inad ? 'bg-red-50/40' : ''}`}>
+                              <tr key={aluno.id} className={`border-b border-border/40 hover:bg-muted/40 ${selectedRows.has(aluno.id) ? 'bg-primary/5' : inad ? 'bg-red-50/40' : ''}`}>
+                                <td className="py-2.5 px-2"><input type="checkbox" className="cursor-pointer" checked={selectedRows.has(aluno.id)} onChange={() => toggleRowSelection(aluno.id)} /></td>
                                 <td className="py-2.5 px-3 font-medium">
                                   <div className="flex items-center gap-1.5">
+                                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${urgDot.cls}`} title={urgDot.tip} />
                                     {aluno.nome}
                                     {aluno.contrato_assinado
                                       ? <span title="Contrato assinado" className="text-green-600 text-[10px] font-bold">-</span>
@@ -1079,9 +1281,29 @@ export function Financeiro() {
                                   )}
                                 </td>
                                 <td className="py-2.5 px-3">
-                                  {aluno.whatsapp ? <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{aluno.whatsapp}</span> : <span className="text-muted-foreground text-xs">-</span>}
+                                  {aluno.whatsapp
+                                    ? <a href={`https://wa.me/${aluno.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer"
+                                        className="flex items-center gap-1 text-green-700 hover:text-green-900 font-medium transition-colors">
+                                        <Phone className="h-3.5 w-3.5" />{aluno.whatsapp}
+                                      </a>
+                                    : <span className="text-muted-foreground text-xs">-</span>}
                                 </td>
-                                <td className="py-2.5 px-3 text-muted-foreground text-xs">{turma?.nome || '-'}</td>
+                                <td className="py-2.5 px-3 text-muted-foreground text-xs">
+                                  {isSemTurma
+                                    ? <Select
+                                        value=""
+                                        onValueChange={v => quickAssignTurma(aluno.id, v)}
+                                        disabled={assigningTurma[aluno.id]}
+                                      >
+                                        <SelectTrigger className="h-7 text-xs w-36 border-amber-300 text-amber-700 bg-amber-50">
+                                          <SelectValue placeholder={assigningTurma[aluno.id] ? 'Salvando...' : 'Atribuir turma'} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {filteredTurmas.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
+                                        </SelectContent>
+                                      </Select>
+                                    : turma?.nome || '-'}
+                                </td>
                                 <td className="py-2.5 px-3">
                                   <div className="flex flex-col gap-1">
                                     <Badge className={pgBadge[method]}>{method === 'boleto' ? paymentLabels[method] : `${paymentLabels[method]} pago`}</Badge>
@@ -1121,6 +1343,7 @@ export function Financeiro() {
                                 <td className="py-2.5 px-3">
                                   <div className="flex gap-1">
                                     <Button variant="ghost" size="sm" onClick={() => openAlunoDetail(aluno)} title="Ver detalhes"><Eye className="h-4 w-4" /></Button>
+                                    <Button variant="ghost" size="sm" onClick={() => copiarMensagem(aluno)} title="Copiar mensagem de cobranca" className="text-muted-foreground hover:text-foreground"><Copy className="h-4 w-4" /></Button>
                                     <Button variant="ghost" size="sm" onClick={() => { setAlunoToDelete(aluno); setShowDeleteDialog(true); }} className="text-destructive hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                                   </div>
                                 </td>
@@ -1297,6 +1520,28 @@ export function Financeiro() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEditTurma(false)}>Cancelar</Button>
             <Button onClick={saveEditTurma} disabled={savingTurma} className="bg-primary text-white">{savingTurma ? 'Salvando...' : 'Salvar'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog duplicata */}
+      <Dialog open={!!duplicataWarning} onOpenChange={() => setDuplicataWarning(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Possivel duplicata</DialogTitle>
+            <DialogDescription>Ja existe um aluno cadastrado com o mesmo email ou WhatsApp.</DialogDescription>
+          </DialogHeader>
+          {duplicataWarning && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm space-y-1">
+              <p className="font-semibold">{duplicataWarning.nome}</p>
+              {duplicataWarning.whatsapp && <p className="text-muted-foreground">{duplicataWarning.whatsapp}</p>}
+              {duplicataWarning.email && <p className="text-muted-foreground">{duplicataWarning.email}</p>}
+              <p className="text-xs">Status: <span className="font-medium">{duplicataWarning.status}</span></p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDuplicataWarning(null)}>Cancelar</Button>
+            <Button onClick={() => { setDuplicataWarning(null); createAluno(true); }} className="bg-primary text-white">Cadastrar mesmo assim</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -105,6 +105,14 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   const [aulaSecretaEventos, setAulaSecretaEventos] = useState<{ id: string; nome: string }[]>([]);
   const [newAulaSecretaName, setNewAulaSecretaName] = useState('');
   const [isAulaSecretaDialogOpen, setIsAulaSecretaDialogOpen] = useState(false);
+  const [vencimentosHoje, setVencimentosHoje] = useState(0);
+
+  useEffect(() => {
+    const hoje = new Date();
+    const hojeStr = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`;
+    supabase.from('pagamentos').select('id', { count: 'exact', head: true }).eq('data_vencimento', hojeStr).neq('status', 'pago')
+      .then(({ count }) => setVencimentosHoje(count || 0));
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -469,8 +477,18 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
                 )}
               >
                 {editMode && !collapsed && <GripVertical className="h-3.5 w-3.5 text-foreground/30 flex-shrink-0" />}
-                <mi.icon className={cn('h-4.5 w-4.5 transition-colors duration-300 flex-shrink-0', currentView === mi.key ? 'text-primary' : 'text-foreground/60')} />
-                {!collapsed && <span>{mi.label}</span>}
+                <div className="relative flex-shrink-0">
+                  <mi.icon className={cn('h-4.5 w-4.5 transition-colors duration-300', currentView === mi.key ? 'text-primary' : 'text-foreground/60')} />
+                  {collapsed && mi.key === 'financeiro' && vencimentosHoje > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 rounded-full w-2 h-2" />
+                  )}
+                </div>
+                {!collapsed && <span className="flex-1">{mi.label}</span>}
+                {!collapsed && mi.key === 'financeiro' && vencimentosHoje > 0 && (
+                  <span className="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 leading-none">
+                    {vencimentosHoje}
+                  </span>
+                )}
               </button>
             </div>
           );
