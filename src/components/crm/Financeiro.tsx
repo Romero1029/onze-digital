@@ -951,6 +951,147 @@ export function Financeiro() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadFichaPDF = () => {
+    if (!alunoDetail) return;
+    const turma = turmas.find(t => t.id === (editAlunoForm.turma_id || alunoDetail.turma_id));
+    const parcelas = pagamentos
+      .filter(p => p.aluno_id === alunoDetail.id)
+      .sort((a, b) => a.numero_parcela - b.numero_parcela);
+    const pagas = parcelas.filter(p => p.status === 'pago').length;
+    const total = parcelas.length;
+    const geradoEm = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    const fmtDate = (d?: string | null) => {
+      if (!d) return '—';
+      try { const [y, m, dd] = d.split('T')[0].split('-'); return `${dd}/${m}/${y}`; } catch { return d; }
+    };
+    const fmtStatus = (s: string) => ({ pago: 'Pago', atrasado: 'Atrasado', pendente: 'Pendente' }[s] || s);
+    const fmtMethod = (m?: string | null) => ({ boleto: 'Boleto — 15 mensalidades', cartao: 'Cartão — 12x', avista: 'À vista — 1x' }[m || ''] || m || '—');
+
+    const contratoStatus = editAlunoForm.contrato_assinado
+      ? 'Assinado'
+      : editAlunoForm.contrato_enviado
+        ? 'Enviado — aguardando assinatura'
+        : editAlunoForm.forms_respondido
+          ? 'Forms respondido'
+          : 'Pendente';
+
+    const parcelasRows = parcelas.map(p => `
+      <tr class="${p.status === 'pago' ? 'row-pago' : p.status === 'atrasado' ? 'row-atraso' : ''}">
+        <td>${p.numero_parcela}/${total}</td>
+        <td>${fmtDate(p.data_vencimento)}</td>
+        <td>${p.data_pagamento ? fmtDate(p.data_pagamento) : '—'}</td>
+        <td class="val">R$ ${p.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+        <td><span class="badge badge-${p.status}">${fmtStatus(p.status)}</span></td>
+      </tr>`).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Ficha — ${alunoDetail.nome}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;padding:32px 40px}
+    h1{font-size:20px;font-weight:700;letter-spacing:-0.3px}
+    .subtitle{font-size:11px;color:#666;margin-top:2px}
+    .divider{border:none;border-top:1px solid #e5e5e5;margin:18px 0}
+    .section-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:10px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .field label{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:2px}
+    .field span{font-size:12px;color:#1a1a1a;font-weight:500}
+    table{width:100%;border-collapse:collapse;font-size:11px}
+    th{background:#f5f5f5;text-align:left;padding:7px 10px;font-size:9px;text-transform:uppercase;letter-spacing:0.8px;color:#666;border-bottom:1px solid #e0e0e0}
+    td{padding:7px 10px;border-bottom:1px solid #f0f0f0;color:#333}
+    .val{font-weight:600;font-variant-numeric:tabular-nums}
+    .row-pago td{background:#f0fdf4}
+    .row-atraso td{background:#fff5f5}
+    .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+    .badge-pago{background:#dcfce7;color:#166534}
+    .badge-atrasado{background:#fee2e2;color:#991b1b}
+    .badge-pendente{background:#fef9c3;color:#854d0e}
+    .contrato-pill{display:inline-block;padding:3px 12px;border-radius:20px;font-size:10px;font-weight:600;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+    .header-row{display:flex;justify-content:space-between;align-items:flex-start}
+    .meta{font-size:10px;color:#999;text-align:right}
+    .totals{display:flex;gap:24px;padding:12px 16px;background:#f9fafb;border-radius:8px;border:1px solid #e5e5e5;margin-bottom:12px}
+    .totals .item label{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:0.5px}
+    .totals .item .num{font-size:15px;font-weight:700;color:#111}
+    .footer{margin-top:28px;font-size:9px;color:#bbb;text-align:center}
+    @media print{body{padding:16px 24px}@page{margin:15mm}}
+  </style>
+</head>
+<body>
+  <div class="header-row">
+    <div>
+      <h1>${alunoDetail.nome}</h1>
+      <div class="subtitle">${turma?.nome || 'Sem turma atribuída'} · ${turma?.produto || alunoDetail.produto || ''}</div>
+    </div>
+    <div class="meta">
+      <div>Ficha do Aluno</div>
+      <div>Gerado em ${geradoEm}</div>
+      <div style="margin-top:4px"><span class="contrato-pill">${contratoStatus}</span></div>
+    </div>
+  </div>
+
+  <hr class="divider"/>
+
+  <div class="section-title">Dados Pessoais</div>
+  <div class="grid" style="margin-bottom:16px">
+    <div class="field"><label>Nome completo</label><span>${editAlunoForm.nome || alunoDetail.nome || '—'}</span></div>
+    <div class="field"><label>WhatsApp</label><span>${editAlunoForm.whatsapp || alunoDetail.whatsapp || '—'}</span></div>
+    <div class="field"><label>E-mail</label><span>${editAlunoForm.email || alunoDetail.email || '—'}</span></div>
+    <div class="field"><label>CPF</label><span>${editAlunoForm.cpf || alunoDetail.cpf || '—'}</span></div>
+    <div class="field"><label>Data de nascimento</label><span>${fmtDate(editAlunoForm.data_nascimento || alunoDetail.data_nascimento)}</span></div>
+    <div class="field"><label>País</label><span>${editAlunoForm.pais || alunoDetail.pais || '—'}</span></div>
+    <div class="field"><label>CEP</label><span>${editAlunoForm.cep || alunoDetail.cep || '—'}</span></div>
+    <div class="field"><label>Cidade / Estado</label><span>${editAlunoForm.cidade_estado || alunoDetail.cidade_estado || '—'}</span></div>
+    <div class="field"><label>Origem</label><span>${editAlunoForm.origem_lead || alunoDetail.origem_lead || '—'}</span></div>
+  </div>
+  ${(editAlunoForm.endereco || alunoDetail.endereco) ? `<div class="field" style="margin-bottom:16px"><label>Endereço</label><span>${editAlunoForm.endereco || alunoDetail.endereco}</span></div>` : ''}
+
+  <hr class="divider"/>
+
+  <div class="section-title">Financeiro</div>
+  <div class="grid-2" style="margin-bottom:16px">
+    <div class="field"><label>Turma</label><span>${turma?.nome || '—'}</span></div>
+    <div class="field"><label>Forma de pagamento</label><span>${fmtMethod(editAlunoForm.forma_pagamento || alunoDetail.forma_pagamento)}</span></div>
+    <div class="field"><label>Valor mensalidade</label><span>R$ ${((editAlunoForm.valor_mensalidade ?? alunoDetail.valor_mensalidade ?? turma?.valor_mensalidade ?? 0) as number).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
+    <div class="field"><label>Dia de vencimento</label><span>Dia ${editAlunoForm.dia_vencimento || alunoDetail.dia_vencimento || '—'}</span></div>
+    <div class="field"><label>Data de matrícula</label><span>${fmtDate(editAlunoForm.data_matricula || alunoDetail.data_matricula)}</span></div>
+    <div class="field"><label>Início da turma</label><span>${fmtDate(editAlunoForm.data_inicio || alunoDetail.data_inicio)}</span></div>
+    <div class="field"><label>Fim da turma</label><span>${fmtDate(editAlunoForm.data_fim || alunoDetail.data_fim)}</span></div>
+    <div class="field"><label>Status</label><span>${editAlunoForm.status || alunoDetail.status || '—'}</span></div>
+  </div>
+
+  ${(editAlunoForm.observacoes || alunoDetail.observacoes) ? `<div class="field" style="margin-bottom:16px"><label>Observações</label><span>${editAlunoForm.observacoes || alunoDetail.observacoes}</span></div>` : ''}
+
+  <hr class="divider"/>
+
+  <div class="section-title">Parcelas</div>
+  <div class="totals">
+    <div class="item"><label>Total</label><div class="num">${total}</div></div>
+    <div class="item"><label>Pagas</label><div class="num" style="color:#166534">${pagas}</div></div>
+    <div class="item"><label>Em aberto</label><div class="num" style="color:#92400e">${total - pagas}</div></div>
+    <div class="item"><label>Recebido</label><div class="num">R$ ${parcelas.filter(p => p.status === 'pago').reduce((s, p) => s + p.valor, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div></div>
+    <div class="item"><label>A receber</label><div class="num">R$ ${parcelas.filter(p => p.status !== 'pago').reduce((s, p) => s + p.valor, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div></div>
+  </div>
+  ${total > 0 ? `
+  <table>
+    <thead><tr><th>#</th><th>Vencimento</th><th>Pago em</th><th>Valor</th><th>Status</th></tr></thead>
+    <tbody>${parcelasRows}</tbody>
+  </table>` : '<p style="color:#888;font-size:11px;padding:8px 0">Nenhuma parcela gerada.</p>'}
+
+  <div class="footer">Sistema 11DS · Documento gerado em ${geradoEm}</div>
+
+  <script>window.onload=function(){window.print()}<\/script>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank', 'width=900,height=700');
+    if (w) { w.document.write(html); w.document.close(); }
+  };
+
   const quickAssignTurma = async (alunoId: string, turmaId: string) => {
     setAssigningTurma(prev => ({ ...prev, [alunoId]: true }));
     const { error } = await supabase.from('alunos').update({ turma_id: turmaId }).eq('id', alunoId);
@@ -2009,6 +2150,9 @@ export function Financeiro() {
             );
           })()}
           <DialogFooter>
+            <Button variant="outline" onClick={downloadFichaPDF} className="mr-auto gap-1.5">
+              <Download className="h-4 w-4" />Baixar PDF
+            </Button>
             <Button variant="outline" onClick={() => setShowAlunoDetail(false)}>Fechar</Button>
             <Button onClick={saveAlunoDetail} disabled={savingAluno} className="bg-primary text-white"><CheckCircle2 className="h-4 w-4 mr-1" />{savingAluno ? 'Salvando...' : 'Salvar Alteracoes'}</Button>
           </DialogFooter>
