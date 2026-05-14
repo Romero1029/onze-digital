@@ -16,7 +16,7 @@ import { toast } from '@/components/ui/use-toast';
 import {
   Plus, DollarSign, Users, AlertCircle, Eye, Trash2,
   TrendingUp, Target, Phone, Pencil, Building2, CheckCircle2,
-  Copy, Download,
+  Copy, Download, ExternalLink,
 } from 'lucide-react';
 import { format, isSameMonth, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -73,6 +73,7 @@ interface Aluno {
   contrato_assinado_em?: string;
   autentique_documento_id?: string;
   autentique_link_assinatura?: string;
+  contrato_baixado?: boolean;
   created_at: string;
 }
 
@@ -315,7 +316,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes, responsaveisRes] = await Promise.all([
         supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, responsavel_id, created_at').order('created_at', { ascending: false }).limit(200),
-        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, contrato_baixado, created_at').order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
         supabase.from('responsaveis').select('id, nome, created_at').order('nome'),
       ]);
@@ -355,7 +356,9 @@ export function Financeiro() {
     const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
     filteredPagamentos.forEach(p => {
       const aluno = alunos.find(a => a.id === p.aluno_id);
-      if (aluno && normalizePaymentMethod(aluno.forma_pagamento) !== 'boleto') return;
+      if (!aluno) return;
+      if (aluno.status === 'cancelado' || aluno.status === 'concluido') return;
+      if (normalizePaymentMethod(aluno.forma_pagamento) !== 'boleto') return;
 
       if (p.status !== 'pago') {
         const venc = new Date(p.data_vencimento + 'T12:00:00');
@@ -795,6 +798,7 @@ export function Financeiro() {
       contrato_assinado_em: toDateInput(a.contrato_assinado_em),
       autentique_documento_id: a.autentique_documento_id || '',
       autentique_link_assinatura: a.autentique_link_assinatura || '',
+      contrato_baixado: a.contrato_baixado ?? false,
       total_mensalidades: a.total_mensalidades,
       observacoes: a.observacoes || '',
     });
@@ -856,6 +860,7 @@ export function Financeiro() {
         contrato_assinado_em: checkedDate(editAlunoForm.contrato_assinado, editAlunoForm.contrato_assinado_em, alunoDetail.contrato_assinado_em),
         autentique_documento_id: editAlunoForm.autentique_documento_id || null,
         autentique_link_assinatura: editAlunoForm.autentique_link_assinatura || null,
+        contrato_baixado: editAlunoForm.contrato_baixado ?? false,
         total_mensalidades: targetTotal,
         observacoes: editAlunoForm.observacoes || null,
       };
@@ -1979,6 +1984,27 @@ export function Financeiro() {
                     className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${editAlunoForm.contrato_assinado ? 'bg-green-500 text-white' : 'bg-white border border-border text-muted-foreground'}`}>
                     Assinado
                   </button>
+                  <button
+                    onClick={() => setEditAlunoForm(f => ({ ...f, contrato_baixado: !f.contrato_baixado }))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${editAlunoForm.contrato_baixado ? 'bg-violet-500 text-white' : 'bg-white border border-border text-muted-foreground'}`}>
+                    Baixado
+                  </button>
+                  <div className="flex items-center gap-1.5 ml-1">
+                    <a
+                      href={`https://www.asaas.com/customerAccount/index?name=${encodeURIComponent(alunoDetail.nome)}`}
+                      target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border border-border bg-white hover:bg-zinc-50 transition-colors text-zinc-700"
+                      title="Buscar no Asaas">
+                      <ExternalLink className="h-3 w-3" />Asaas
+                    </a>
+                    <a
+                      href={`https://app.voomp.com.br`}
+                      target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border border-border bg-white hover:bg-zinc-50 transition-colors text-zinc-700"
+                      title="Abrir Voomp">
+                      <ExternalLink className="h-3 w-3" />Voomp
+                    </a>
+                  </div>
                   <div className="ml-auto flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">Status:</span>
                     <Select value={editAlunoForm.status || 'ativo'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, status: v as Aluno['status'] })}>
