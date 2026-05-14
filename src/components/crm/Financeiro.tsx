@@ -76,6 +76,10 @@ interface Aluno {
   contrato_baixado?: boolean;
   contrato_arquivo_url?: string;
   contrato_arquivo_nome?: string;
+  asaas_integrado?: boolean;
+  asaas_link?: string;
+  voomp_integrado?: boolean;
+  voomp_link?: string;
   created_at: string;
 }
 
@@ -314,7 +318,7 @@ export function Financeiro() {
 
   useEffect(() => { loadData(); }, []);
 
-  const ALUNOS_SELECT_FULL = 'id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, contrato_baixado, contrato_arquivo_url, contrato_arquivo_nome, created_at';
+  const ALUNOS_SELECT_FULL = 'id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, contrato_baixado, contrato_arquivo_url, contrato_arquivo_nome, asaas_integrado, asaas_link, voomp_integrado, voomp_link, created_at';
   const ALUNOS_SELECT_BASE = 'id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, created_at';
 
   const loadData = async () => {
@@ -814,6 +818,10 @@ export function Financeiro() {
       contrato_baixado: a.contrato_baixado ?? false,
       contrato_arquivo_url: a.contrato_arquivo_url || '',
       contrato_arquivo_nome: a.contrato_arquivo_nome || '',
+      asaas_integrado: a.asaas_integrado ?? false,
+      asaas_link: a.asaas_link || '',
+      voomp_integrado: a.voomp_integrado ?? false,
+      voomp_link: a.voomp_link || '',
       total_mensalidades: a.total_mensalidades,
       observacoes: a.observacoes || '',
     });
@@ -878,6 +886,10 @@ export function Financeiro() {
         contrato_baixado: editAlunoForm.contrato_baixado ?? false,
         contrato_arquivo_url: editAlunoForm.contrato_arquivo_url || null,
         contrato_arquivo_nome: editAlunoForm.contrato_arquivo_nome || null,
+        asaas_integrado: editAlunoForm.asaas_integrado ?? false,
+        asaas_link: editAlunoForm.asaas_link || null,
+        voomp_integrado: editAlunoForm.voomp_integrado ?? false,
+        voomp_link: editAlunoForm.voomp_link || null,
         total_mensalidades: targetTotal,
         observacoes: editAlunoForm.observacoes || null,
       };
@@ -2041,22 +2053,16 @@ export function Financeiro() {
                     className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${editAlunoForm.contrato_baixado ? 'bg-violet-500 text-white' : 'bg-white border border-border text-muted-foreground'}`}>
                     Baixado
                   </button>
-                  <div className="flex items-center gap-1.5 ml-1">
-                    <a
-                      href={`https://www.asaas.com/customerAccount/index?name=${encodeURIComponent(alunoDetail.nome)}`}
-                      target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border border-border bg-white hover:bg-zinc-50 transition-colors text-zinc-700"
-                      title="Buscar no Asaas">
-                      <ExternalLink className="h-3 w-3" />Asaas
-                    </a>
-                    <a
-                      href={`https://app.voomp.com.br`}
-                      target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border border-border bg-white hover:bg-zinc-50 transition-colors text-zinc-700"
-                      title="Abrir Voomp">
-                      <ExternalLink className="h-3 w-3" />Voomp
-                    </a>
-                  </div>
+                  <button
+                    onClick={() => setEditAlunoForm(f => ({ ...f, asaas_integrado: !f.asaas_integrado }))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${editAlunoForm.asaas_integrado ? 'bg-sky-500 text-white' : 'bg-white border border-border text-muted-foreground'}`}>
+                    Asaas
+                  </button>
+                  <button
+                    onClick={() => setEditAlunoForm(f => ({ ...f, voomp_integrado: !f.voomp_integrado }))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${editAlunoForm.voomp_integrado ? 'bg-orange-500 text-white' : 'bg-white border border-border text-muted-foreground'}`}>
+                    Voomp
+                  </button>
                   <div className="ml-auto flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">Status:</span>
                     <Select value={editAlunoForm.status || 'ativo'} onValueChange={v => setEditAlunoForm({ ...editAlunoForm, status: v as Aluno['status'] })}>
@@ -2079,6 +2085,34 @@ export function Financeiro() {
                     <div><label className="text-xs text-muted-foreground">Assinado em</label><Input type="date" value={editAlunoForm.contrato_assinado_em || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, contrato_assinado_em: e.target.value, contrato_assinado: !!e.target.value || editAlunoForm.contrato_assinado })} className="mt-1 h-8 text-sm" /></div>
                     <div><label className="text-xs text-muted-foreground">ID Autentique</label><Input value={editAlunoForm.autentique_documento_id || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, autentique_documento_id: e.target.value })} className="mt-1 h-8 text-sm" /></div>
                     <div className="lg:col-span-3"><label className="text-xs text-muted-foreground">Link de assinatura</label><Input value={editAlunoForm.autentique_link_assinatura || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, autentique_link_assinatura: e.target.value })} placeholder="https://..." className="mt-1 h-8 text-sm" /></div>
+                    <div>
+                      <label className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${editAlunoForm.asaas_integrado ? 'bg-sky-500' : 'bg-zinc-300'}`} />
+                        Link Asaas
+                      </label>
+                      <div className="flex items-center gap-1 mt-1">
+                        <Input value={editAlunoForm.asaas_link || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, asaas_link: e.target.value })} placeholder="https://asaas.com/..." className="h-8 text-sm flex-1" />
+                        {editAlunoForm.asaas_link && (
+                          <a href={editAlunoForm.asaas_link} target="_blank" rel="noopener noreferrer" className="text-sky-600 hover:text-sky-800 flex-shrink-0">
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${editAlunoForm.voomp_integrado ? 'bg-orange-500' : 'bg-zinc-300'}`} />
+                        Link Voomp
+                      </label>
+                      <div className="flex items-center gap-1 mt-1">
+                        <Input value={editAlunoForm.voomp_link || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, voomp_link: e.target.value })} placeholder="https://voomp.com.br/..." className="h-8 text-sm flex-1" />
+                        {editAlunoForm.voomp_link && (
+                          <a href={editAlunoForm.voomp_link} target="_blank" rel="noopener noreferrer" className="text-orange-600 hover:text-orange-800 flex-shrink-0">
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
                     <div className="col-span-2 lg:col-span-4">
                       <label className="text-xs text-muted-foreground">Arquivo do contrato</label>
                       {editAlunoForm.contrato_arquivo_url ? (
