@@ -314,19 +314,29 @@ export function Financeiro() {
 
   useEffect(() => { loadData(); }, []);
 
+  const ALUNOS_SELECT_FULL = 'id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, contrato_baixado, contrato_arquivo_url, contrato_arquivo_nome, created_at';
+  const ALUNOS_SELECT_BASE = 'id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, created_at';
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [turmasRes, alunosRes, pagamentosRes, responsaveisRes] = await Promise.all([
+      const [turmasRes, alunosRes, pagamentosRes] = await Promise.all([
         supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, responsavel_id, created_at').order('created_at', { ascending: false }).limit(200),
-        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, contrato_baixado, contrato_arquivo_url, contrato_arquivo_nome, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select(ALUNOS_SELECT_FULL).order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
-        supabase.from('responsaveis').select('id, nome, created_at').order('nome'),
       ]);
       if (turmasRes.data) setTurmas(turmasRes.data);
-      if (alunosRes.data) setAlunos(alunosRes.data);
+      if (alunosRes.data) {
+        setAlunos(alunosRes.data);
+      } else if (alunosRes.error) {
+        // Fallback: novas colunas ainda nao existem (migration pendente)
+        const { data: fallback } = await supabase.from('alunos').select(ALUNOS_SELECT_BASE).order('created_at', { ascending: false }).limit(500);
+        if (fallback) setAlunos(fallback);
+      }
       if (pagamentosRes.data) setPagamentos(pagamentosRes.data);
-      if (responsaveisRes.data) setResponsaveis(responsaveisRes.data);
+      // Responsaveis e opcional (tabela pode nao existir ainda)
+      const respRes = await supabase.from('responsaveis').select('id, nome, created_at').order('nome');
+      if (respRes.data) setResponsaveis(respRes.data);
     } catch (e) {
       toast({ variant: 'destructive', title: 'Erro', description: 'Falha ao carregar dados' });
     } finally {
