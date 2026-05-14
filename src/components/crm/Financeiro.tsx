@@ -16,7 +16,7 @@ import { toast } from '@/components/ui/use-toast';
 import {
   Plus, DollarSign, Users, AlertCircle, Eye, Trash2,
   TrendingUp, Target, Phone, Pencil, Building2, CheckCircle2,
-  Copy, Download, ExternalLink,
+  Copy, Download, ExternalLink, Upload, FileText,
 } from 'lucide-react';
 import { format, isSameMonth, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -74,6 +74,8 @@ interface Aluno {
   autentique_documento_id?: string;
   autentique_link_assinatura?: string;
   contrato_baixado?: boolean;
+  contrato_arquivo_url?: string;
+  contrato_arquivo_nome?: string;
   created_at: string;
 }
 
@@ -292,6 +294,7 @@ export function Financeiro() {
   const [editAlunoForm, setEditAlunoForm] = useState<Partial<Aluno> & { turma_id_new?: string }>({});
   const [editTurmaForm, setEditTurmaForm] = useState<Partial<Turma>>({});
   const [savingAluno, setSavingAluno] = useState(false);
+  const [uploadingContrato, setUploadingContrato] = useState(false);
   const [savingTurma, setSavingTurma] = useState(false);
   const [showPagoDialog, setShowPagoDialog] = useState(false);
   const [pagoInfo, setPagoInfo] = useState<{ pagamentoId: string; alunoId: string; data: string } | null>(null);
@@ -316,7 +319,7 @@ export function Financeiro() {
     try {
       const [turmasRes, alunosRes, pagamentosRes, responsaveisRes] = await Promise.all([
         supabase.from('turmas').select('id, nome, produto, tipo, data_inicio, data_fim, valor_mensalidade, total_mensalidades, responsavel_id, created_at').order('created_at', { ascending: false }).limit(200),
-        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, contrato_baixado, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select('id, turma_id, produto, nome, whatsapp, email, cpf, data_nascimento, endereco, cep, cidade_estado, pais, dia_vencimento, dia_vencimento_contrato, status, mensalidades_pagas, total_mensalidades, data_inicio, data_fim, data_matricula, origem_lead, valor_mensalidade, forma_pagamento, observacoes, forms_respondido, forms_respondido_em, contrato_enviado, contrato_enviado_em, contrato_assinado, contrato_assinado_em, autentique_documento_id, autentique_link_assinatura, contrato_baixado, contrato_arquivo_url, contrato_arquivo_nome, created_at').order('created_at', { ascending: false }).limit(500),
         supabase.from('pagamentos').select('id, aluno_id, turma_id, produto, valor, mes_referencia, data_vencimento, data_pagamento, numero_parcela, status, created_at').order('created_at', { ascending: false }).limit(2000),
         supabase.from('responsaveis').select('id, nome, created_at').order('nome'),
       ]);
@@ -799,6 +802,8 @@ export function Financeiro() {
       autentique_documento_id: a.autentique_documento_id || '',
       autentique_link_assinatura: a.autentique_link_assinatura || '',
       contrato_baixado: a.contrato_baixado ?? false,
+      contrato_arquivo_url: a.contrato_arquivo_url || '',
+      contrato_arquivo_nome: a.contrato_arquivo_nome || '',
       total_mensalidades: a.total_mensalidades,
       observacoes: a.observacoes || '',
     });
@@ -861,6 +866,8 @@ export function Financeiro() {
         autentique_documento_id: editAlunoForm.autentique_documento_id || null,
         autentique_link_assinatura: editAlunoForm.autentique_link_assinatura || null,
         contrato_baixado: editAlunoForm.contrato_baixado ?? false,
+        contrato_arquivo_url: editAlunoForm.contrato_arquivo_url || null,
+        contrato_arquivo_nome: editAlunoForm.contrato_arquivo_nome || null,
         total_mensalidades: targetTotal,
         observacoes: editAlunoForm.observacoes || null,
       };
@@ -1095,6 +1102,41 @@ export function Financeiro() {
 
     const w = window.open('', '_blank', 'width=900,height=700');
     if (w) { w.document.write(html); w.document.close(); }
+  };
+
+  const handleContratoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !alunoDetail) return;
+    e.target.value = '';
+    setUploadingContrato(true);
+    const ext = file.name.split('.').pop() || 'pdf';
+    const path = `${alunoDetail.id}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('contratos').upload(path, file, { upsert: true });
+    if (upErr) {
+      toast({ variant: 'destructive', title: 'Erro no upload', description: upErr.message });
+      setUploadingContrato(false);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from('contratos').getPublicUrl(path);
+    const url = urlData.publicUrl;
+    await supabase.from('alunos').update({ contrato_arquivo_url: url, contrato_arquivo_nome: file.name }).eq('id', alunoDetail.id);
+    setEditAlunoForm(f => ({ ...f, contrato_arquivo_url: url, contrato_arquivo_nome: file.name }));
+    setAlunos(prev => prev.map(a => a.id === alunoDetail.id ? { ...a, contrato_arquivo_url: url, contrato_arquivo_nome: file.name } : a));
+    setUploadingContrato(false);
+    toast({ title: 'Contrato anexado!' });
+  };
+
+  const removeContratoArquivo = async () => {
+    if (!alunoDetail) return;
+    const url = editAlunoForm.contrato_arquivo_url;
+    if (url) {
+      const parts = url.split('/contratos/');
+      if (parts[1]) await supabase.storage.from('contratos').remove([parts[1]]);
+    }
+    await supabase.from('alunos').update({ contrato_arquivo_url: null, contrato_arquivo_nome: null }).eq('id', alunoDetail.id);
+    setEditAlunoForm(f => ({ ...f, contrato_arquivo_url: '', contrato_arquivo_nome: '' }));
+    setAlunos(prev => prev.map(a => a.id === alunoDetail.id ? { ...a, contrato_arquivo_url: undefined, contrato_arquivo_nome: undefined } : a));
+    toast({ title: 'Arquivo removido.' });
   };
 
   const quickAssignTurma = async (alunoId: string, turmaId: string) => {
@@ -2027,6 +2069,34 @@ export function Financeiro() {
                     <div><label className="text-xs text-muted-foreground">Assinado em</label><Input type="date" value={editAlunoForm.contrato_assinado_em || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, contrato_assinado_em: e.target.value, contrato_assinado: !!e.target.value || editAlunoForm.contrato_assinado })} className="mt-1 h-8 text-sm" /></div>
                     <div><label className="text-xs text-muted-foreground">ID Autentique</label><Input value={editAlunoForm.autentique_documento_id || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, autentique_documento_id: e.target.value })} className="mt-1 h-8 text-sm" /></div>
                     <div className="lg:col-span-3"><label className="text-xs text-muted-foreground">Link de assinatura</label><Input value={editAlunoForm.autentique_link_assinatura || ''} onChange={e => setEditAlunoForm({ ...editAlunoForm, autentique_link_assinatura: e.target.value })} placeholder="https://..." className="mt-1 h-8 text-sm" /></div>
+                    <div className="col-span-2 lg:col-span-4">
+                      <label className="text-xs text-muted-foreground">Arquivo do contrato</label>
+                      {editAlunoForm.contrato_arquivo_url ? (
+                        <div className="mt-1 flex items-center gap-2 px-3 py-2 rounded-md border border-emerald-200 bg-emerald-50/60">
+                          <FileText className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                          <span className="text-sm text-emerald-800 flex-1 truncate" title={editAlunoForm.contrato_arquivo_nome}>
+                            {editAlunoForm.contrato_arquivo_nome || 'Contrato'}
+                          </span>
+                          <a href={editAlunoForm.contrato_arquivo_url} target="_blank" rel="noopener noreferrer"
+                            className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 flex-shrink-0 flex items-center gap-1">
+                            <ExternalLink className="h-3 w-3" />Ver
+                          </a>
+                          <button onClick={removeContratoArquivo}
+                            className="text-muted-foreground hover:text-red-500 transition-colors flex-shrink-0 ml-1">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label className={`mt-1 flex items-center gap-2 px-3 py-2 rounded-md border border-dashed border-border bg-white hover:bg-muted/20 cursor-pointer transition-colors ${uploadingContrato ? 'opacity-60 pointer-events-none' : ''}`}>
+                          <Upload className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                          <span className="text-sm text-muted-foreground">
+                            {uploadingContrato ? 'Enviando...' : 'Clique para anexar PDF, imagem ou documento'}
+                          </span>
+                          <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+                            onChange={handleContratoUpload} disabled={uploadingContrato} />
+                        </label>
+                      )}
+                    </div>
                   </div>
                 </div>
 
