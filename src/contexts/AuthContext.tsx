@@ -175,41 +175,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Initialize auth
+  // Initialize auth — single path via onAuthStateChange com INITIAL_SESSION
   useEffect(() => {
-    // Set up auth state listener FIRST
+    let initialised = false;
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (event, session) => {
         setSession(session);
-        
+
+        // INITIAL_SESSION dispara na montagem com a sessão existente ou null.
+        // Eventos subsequentes (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED) atualizam.
         if (session?.user) {
-          // Defer Supabase calls with setTimeout to prevent deadlock
+          // Defer com setTimeout para evitar deadlock interno do Supabase SDK
           setTimeout(async () => {
             const appUser = await getCurrentUser(session.user);
             setUser(appUser);
-            await fetchUsers();
+            if (!initialised) {
+              await fetchUsers();
+              initialised = true;
+            }
             setLoading(false);
           }, 0);
         } else {
           setUser(null);
           setUsers([]);
           setLoading(false);
+          initialised = true;
         }
       }
     );
-
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) {
-        getCurrentUser(session.user).then((appUser) => {
-          setUser(appUser);
-          fetchUsers().then(() => setLoading(false));
-        });
-      } else {
-        setLoading(false);
-      }
-    });
 
     return () => subscription.unsubscribe();
   }, []);
@@ -366,9 +360,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      await fetchUsers();
-
-      // Update current user if it's the same
+      // Atualiza state local cirurgicamente
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...data } : u));
       if (user?.id === id) {
         setUser((prev) => prev ? { ...prev, ...data } : null);
       }
@@ -394,8 +387,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: error.message };
       }
 
-      await fetchUsers();
-
+      // Atualiza state local cirurgicamente
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, permissions } : u));
       if (user?.id === id) {
         setUser((prev) => prev ? { ...prev, permissions } : prev);
       }
@@ -409,9 +402,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const deleteUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      // Delete will cascade to profile and roles due to foreign key setup
-      // But we need to delete auth user which requires admin privileges
-      // For now, we just deactivate the user
       const { error } = await supabase
         .from('profiles')
         .update({ ativo: false })
@@ -422,16 +412,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: error.message };
       }
 
-      await fetchUsers();
+      // Também invalida sessões ativas do usuário via edge function
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (accessToken) {
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-delete-user`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ user_id: id }),
+        }).catch(e => console.warn('admin-delete-user call failed:', e));
+      }
+
+      // Atualiza state local cirurgicamente sem refetch completo
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, ativo: false } : u));
       return { success: true };
     } catch (error) {
       console.error('DeleteUser exception:', error);
-      return { success: false, error: 'Erro ao excluir usuário.' };
+      return { success: false, error: 'Erro ao desativar usuário.' };
     }
   };
 
   const getActiveVendedores = (): AppUser[] => {
-    return users.filter((u) => u.ativo);
+    return users.filter((u) => u.ativo && (u.tipo === 'vendedor' || u.tipo === 'admin'));
   };
 
   const getUserById = (id: string): AppUser | undefined => {

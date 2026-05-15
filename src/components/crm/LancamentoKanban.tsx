@@ -753,6 +753,9 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
   // ── Fetch lancamento + leads ────────────────────────────────────────────────
   useEffect(() => {
     if (!lancamentoId) return;
+    // Clear stale leads from previous lancamento immediately to prevent
+    // the colunas-watch effect from running migrateLegacyLeads on wrong data
+    setLeads([]);
     setLoading(true);
 
     const load = async () => {
@@ -799,6 +802,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
     });
 
     // Batch update DB — fire and forget errors so UI is not blocked
+    // Double-check lancamento_id in WHERE clause to prevent cross-lancamento data corruption
     await Promise.all(
       legacy.map(lead => {
         const newFase = (migrated.find(m => m.id === lead.id) as LaunchLead).fase;
@@ -806,6 +810,7 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
           .from('lancamento_leads')
           .update({ fase: newFase })
           .eq('id', lead.id)
+          .eq('lancamento_id', lancamentoId)
           .then(({ error }) => {
             if (error) console.warn('Migration failed for lead', lead.id, error.message);
           });
@@ -857,6 +862,9 @@ export function LancamentoKanban({ lancamentoId }: LancamentoKanbanProps) {
 
   useEffect(() => {
     if (colunas.length === 0 || leadsRef.current.length === 0) return;
+
+    // Guard: skip if any lead belongs to a different lancamento (stale state during navigation)
+    if (leadsRef.current.some(lead => lead.lancamento_id !== lancamentoId)) return;
 
     const validIds = new Set(colunas.map(coluna => coluna.id));
     const hasLegacyPhase = leadsRef.current.some(lead => !validIds.has(lead.fase));

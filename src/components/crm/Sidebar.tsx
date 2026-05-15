@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Kanban, Settings, UserCog, FileSpreadsheet,
   MessageCircle, Rocket, BarChart3, CheckSquare, ChevronDown,
   ChevronLeft, ChevronRight, Plus, Brain, ListTodo, Scale,
-  GraduationCap, GripVertical, Pencil, Check,
+  GraduationCap, GripVertical, Pencil, Check, MessageSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +38,7 @@ const BASE_MENU: MenuItem[] = [
   { key: 'sheets', label: 'Leads Sheets', icon: FileSpreadsheet },
   { key: 'financeiro', label: 'Financeiro', icon: BarChart3 },
   { key: 'balanco', label: 'Balanco', icon: Scale },
+  { key: 'cobranca', label: 'Cobrança', icon: MessageSquare },
   { key: 'team', label: 'Equipe', icon: UserCog, adminOnly: true },
   {
     group: 'operacoes',
@@ -507,25 +508,32 @@ export function MobileNav({ currentView, onViewChange }: MobileNavProps) {
   const { user } = useAuth();
   const isAdmin = user?.tipo === 'admin';
   const permissions = user?.permissions ?? getDefaultPermissions(user?.tipo);
-  const mobileItems: { key: View; label: string; icon: React.ElementType }[] = [
-    { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { key: 'pipeline', label: 'Leads', icon: Kanban },
-    { key: 'chat', label: 'Chat', icon: MessageCircle },
-    { key: 'lancamentos_30', label: 'Lan.', icon: Rocket },
-    { key: 'operacoes_tarefas', label: 'Tarefas', icon: CheckSquare },
-    { key: 'settings', label: 'Config', icon: Settings },
+
+  const allMobileItems: { key: View; label: string; icon: React.ElementType }[] = [
+    { key: 'dashboard',          label: 'Início',    icon: LayoutDashboard },
+    { key: 'pipeline',           label: 'Leads',     icon: Kanban },
+    { key: 'financeiro',         label: 'Financeiro', icon: BarChart3 },
+    { key: 'cobranca',           label: 'Cobrança',  icon: MessageSquare },
+    { key: 'operacoes_tarefas',  label: 'Tarefas',   icon: CheckSquare },
+    { key: 'chat',               label: 'Chat',      icon: MessageCircle },
+    { key: 'settings',           label: 'Config',    icon: Settings },
   ];
 
-  const visibleItems = mobileItems.filter((item) => canAccessView(item.key, permissions, Boolean(isAdmin)));
+  const visibleItems = allMobileItems
+    .filter(item => canAccessView(item.key, permissions, Boolean(isAdmin)))
+    .slice(0, 5); // limite de 5 itens no nav mobile
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50">
-      <div className="flex justify-around py-2">
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50 safe-area-pb">
+      <div className="flex justify-around py-1">
         {visibleItems.map((item) => (
           <button
             key={item.key}
             onClick={() => onViewChange(item.key)}
-            className={cn('flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors', currentView === item.key ? 'text-primary' : 'text-muted-foreground')}
+            className={cn(
+              'flex flex-col items-center gap-0.5 px-2 py-2 rounded-lg transition-colors flex-1',
+              currentView === item.key ? 'text-primary' : 'text-muted-foreground',
+            )}
           >
             <item.icon className="h-5 w-5" />
             <span className="text-[10px] font-medium">{item.label}</span>

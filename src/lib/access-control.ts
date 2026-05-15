@@ -12,6 +12,7 @@ export interface AccessPermissions {
   canViewAllFinanceiroTurmas: boolean;
   allowedFinanceiroTurmaIds: string[];
   canViewBalanco: boolean;
+  canViewCobranca: boolean;
   canViewOperacoes: boolean;
   canViewMapaMental: boolean;
   canViewRodrygo: boolean;
@@ -25,7 +26,7 @@ export interface AccessPermissions {
 export type AppView =
   | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'balanco' | 'rodrygo'
   | 'lancamentos_30' | 'lancamentos_31' | 'lancamentos_32'
-  | 'team' | 'settings'
+  | 'team' | 'settings' | 'cobranca'
   | 'operacoes_tarefas' | 'operacoes_calendario_geral' | 'operacoes_calendario_conteudo'
   | 'mapa_mental' | 'pedagogico';
 
@@ -43,6 +44,7 @@ export const DEFAULT_NON_ADMIN_PERMISSIONS: AccessPermissions = {
   canViewAllFinanceiroTurmas: true,
   allowedFinanceiroTurmaIds: [],
   canViewBalanco: true,
+  canViewCobranca: false,
   canViewOperacoes: true,
   canViewMapaMental: true,
   canViewRodrygo: true,
@@ -55,6 +57,7 @@ export const DEFAULT_NON_ADMIN_PERMISSIONS: AccessPermissions = {
 
 export const DEFAULT_ADMIN_PERMISSIONS: AccessPermissions = {
   ...DEFAULT_NON_ADMIN_PERMISSIONS,
+  canViewCobranca: true,
   canViewTeam: true,
   canViewSettings: true,
 };
@@ -82,6 +85,7 @@ export function normalizePermissionsRow(row: any, role?: string): AccessPermissi
     canViewAllFinanceiroTurmas: row.can_view_all_financeiro_turmas ?? defaults.canViewAllFinanceiroTurmas,
     allowedFinanceiroTurmaIds: Array.isArray(row.allowed_financeiro_turma_ids) ? row.allowed_financeiro_turma_ids.filter(Boolean) : defaults.allowedFinanceiroTurmaIds,
     canViewBalanco: row.can_view_balanco ?? defaults.canViewBalanco,
+    canViewCobranca: row.can_view_cobranca ?? defaults.canViewCobranca,
     canViewOperacoes: row.can_view_operacoes ?? defaults.canViewOperacoes,
     canViewMapaMental: row.can_view_mapa_mental ?? defaults.canViewMapaMental,
     canViewRodrygo: row.can_view_rodrygo ?? defaults.canViewRodrygo,
@@ -108,6 +112,7 @@ export function permissionsToRow(permissions: AccessPermissions) {
     can_view_all_financeiro_turmas: permissions.canViewAllFinanceiroTurmas,
     allowed_financeiro_turma_ids: permissions.allowedFinanceiroTurmaIds,
     can_view_balanco: permissions.canViewBalanco,
+    can_view_cobranca: permissions.canViewCobranca,
     can_view_operacoes: permissions.canViewOperacoes,
     can_view_mapa_mental: permissions.canViewMapaMental,
     can_view_rodrygo: permissions.canViewRodrygo,
@@ -159,6 +164,7 @@ export function canAccessView(view: string, permissions: AccessPermissions, isAd
     sheets: permissions.canViewSheets,
     financeiro: permissions.canViewFinanceiro,
     balanco: permissions.canViewBalanco,
+    cobranca: permissions.canViewCobranca,
     rodrygo: permissions.canViewRodrygo,
     team: permissions.canViewTeam,
     settings: permissions.canViewSettings,
@@ -169,7 +175,7 @@ export function canAccessView(view: string, permissions: AccessPermissions, isAd
     pedagogico: permissions.canViewPedagogico,
   };
 
-  return permissionByView[view as AppView] ?? true;
+  return permissionByView[view as AppView] ?? false; // deny-by-default para views não mapeadas
 }
 
 export function firstAllowedView(permissions: AccessPermissions, isAdmin: boolean, allowedLaunchIds: string[]) {
