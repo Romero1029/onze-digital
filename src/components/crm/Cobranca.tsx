@@ -22,7 +22,8 @@ import {
 import {
   MessageSquare, Send, Settings, FileText, History, Clock,
   Plus, Trash2, Pencil, Play, CheckCircle2, XCircle, AlertCircle,
-  Wifi, WifiOff, RefreshCw, Zap, Phone, User, Calendar,
+  Wifi, WifiOff, RefreshCw, Zap, Phone, User, Calendar, Info,
+  AlertTriangle, TrendingDown,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -39,6 +40,8 @@ interface CobrancaConfig {
   id: string;
   ativo: boolean;
   horario_envio: string;
+  horario_inicio_envio: string;
+  horario_fim_envio: string;
   dias_pre_vencimento: number[];
   enviar_pre_vencimento: boolean;
   enviar_no_vencimento: boolean;
@@ -84,6 +87,7 @@ interface FilaItem {
   data_vencimento: string;
   dias_offset: number;
   link_pagamento: string;
+  pagamento_status: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -114,6 +118,19 @@ function fmtDate(iso: string | null) {
 }
 
 const VARIAVEIS = ['{{nome}}', '{{valor}}', '{{parcela}}', '{{vencimento}}', '{{dias_atraso}}', '{{link_pagamento}}'];
+
+function addMinutesToTime(base: string, extraMin: number): string {
+  const [h, m] = base.split(':').map(Number);
+  const total = h * 60 + m + extraMin;
+  const rh = Math.floor(total / 60);
+  const rm = total % 60;
+  return `${String(Math.min(rh, 23)).padStart(2, '0')}:${String(rm).padStart(2, '0')}`;
+}
+
+function timeToMin(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
 
 // ─── Subcomponents ───────────────────────────────────────────────────────────
 
@@ -178,6 +195,9 @@ export function Cobranca() {
   // Log detail
   const [logDetail, setLogDetail] = useState<CobrancaLog | null>(null);
 
+  // Confirm bulk modal
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+
   // Search
   const [searchLog, setSearchLog] = useState('');
 
@@ -196,7 +216,6 @@ export function Cobranca() {
     if (tplRes.data) setTemplates(tplRes.data as Template[]);
     if (logRes.data) setLogs(logRes.data as CobrancaLog[]);
 
-    // Buscar fila de hoje
     const hoje = new Date().toISOString().split('T')[0];
     const filaRes = await supabase.rpc('get_alunos_para_cobranca' as any, { p_data: hoje });
     if (filaRes.data) setFila(filaRes.data as FilaItem[]);
@@ -205,6 +224,24 @@ export function Cobranca() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // ── Schedule calculation ──────────────────────────────────────────────────
+  const schedule = useMemo(() => {
+    if (!cobrancaCfg || fila.length === 0) return null;
+    const inicio = cobrancaCfg.horario_inicio_envio || cobrancaCfg.horario_envio || '09:00';
+    const fim = cobrancaCfg.horario_fim_envio || '18:00';
+    const totalMin = timeToMin(fim) - timeToMin(inicio);
+    if (totalMin <= 0) return null;
+    const intervalMin = fila.length > 1 ? Math.floor(totalMin / (fila.length - 1)) : totalMin;
+    const slots = fila.map((_, i) => addMinutesToTime(inicio, i * intervalMin));
+    return { intervalMin, inicio, fim, slots, totalMin };
+  }, [fila, cobrancaCfg]);
+
+  // ── Fila breakdown ────────────────────────────────────────────────────────
+  const filaStats = useMemo(() => ({
+    inadimplentes: fila.filter(f => f.pagamento_status === 'atrasado').length,
+    mesMes: fila.filter(f => f.pagamento_status === 'pendente').length,
+  }), [fila]);
 
   // ── Testar conexão Evolution ──────────────────────────────────────────────
   const testarConexao = async () => {
@@ -228,7 +265,7 @@ export function Cobranca() {
           toast.success('Conectado! Instância encontrada.');
         } else {
           setConexaoStatus('erro');
-          toast.warning(`Servidor acessível mas instância "${evoCfg.instance_name}" não encontrada. Verifique o nome.`);
+          toast.warning(`Servidor acessível mas instância "${evoCfg.instance_name}" não encontrada.`);
         }
       } else {
         setConexaoStatus('erro');
@@ -305,7 +342,6 @@ export function Cobranca() {
 
   // ── Envio manual ──────────────────────────────────────────────────────────
   const abrirSendModal = (item: FilaItem) => {
-    // Pré-selecionar template adequado
     let tipo = item.dias_offset < 0 ? 'pre_vencimento' : item.dias_offset === 0 ? 'vencimento' : 'pos_vencimento';
     const tpl = templates.find(t => t.tipo === tipo && t.dias_offset === item.dias_offset && t.ativo);
     if (tpl) {
@@ -389,10 +425,10 @@ export function Cobranca() {
   };
 
   const dispararBulk = async () => {
-    if (!confirm('Disparar cobrança automática agora para todos os elegíveis?')) return;
+    setBulkConfirmOpen(false);
     const { data: sess } = await supabase.auth.getSession();
     const token = sess.session?.access_token;
-    toast.info('Processando fila...');
+    toast.info('Processando fila de cobrança...');
     const res = await fetch(
       `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/enviar-cobranca`,
       {
@@ -407,7 +443,7 @@ export function Cobranca() {
     );
     const json = await res.json();
     if (json.enviados !== undefined) {
-      toast.success(`${json.enviados} mensagens enviadas, ${json.erros ?? 0} erros`);
+      toast.success(`${json.enviados} mensagens enviadas${json.erros ? `, ${json.erros} erros` : ''}`);
     } else {
       toast.error(json.error ?? 'Erro ao processar fila');
     }
@@ -463,8 +499,8 @@ export function Cobranca() {
           <Button variant="outline" size="sm" onClick={loadAll} className="gap-1.5">
             <RefreshCw size={14}/> Atualizar
           </Button>
-          {cobrancaCfg?.ativo && (
-            <Button size="sm" onClick={dispararBulk} className="gap-1.5">
+          {cobrancaCfg?.ativo && fila.length > 0 && (
+            <Button size="sm" onClick={() => setBulkConfirmOpen(true)} className="gap-1.5">
               <Play size={14}/> Disparar agora
             </Button>
           )}
@@ -501,14 +537,45 @@ export function Cobranca() {
         </TabsList>
 
         {/* ─── FILA ───────────────────────────────────────────────────────── */}
-        <TabsContent value="fila" className="mt-4">
+        <TabsContent value="fila" className="mt-4 space-y-4">
+
+          {/* Schedule info banner */}
+          {fila.length > 0 && schedule && (
+            <Card className="border-blue-200 bg-blue-50/60">
+              <CardContent className="py-3 px-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <Info size={16} className="text-blue-600 mt-0.5 shrink-0" />
+                    <div className="text-sm text-blue-800">
+                      <span className="font-semibold">{fila.length} contatos na fila</span>
+                      {' — '}intervalo de <span className="font-semibold">{schedule.intervalMin} min</span> entre envios,
+                      de <span className="font-semibold">{schedule.inicio}</span> às <span className="font-semibold">{schedule.fim}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 ml-7 sm:ml-0">
+                    {filaStats.inadimplentes > 0 && (
+                      <Badge className="bg-red-50 text-red-700 border border-red-200 gap-1 text-xs">
+                        <TrendingDown size={10}/> {filaStats.inadimplentes} inadimplentes
+                      </Badge>
+                    )}
+                    {filaStats.mesMes > 0 && (
+                      <Badge className="bg-blue-100 text-blue-700 border border-blue-200 gap-1 text-xs">
+                        <Calendar size={10}/> {filaStats.mesMes} este mês
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Calendar size={16}/> Fila de hoje
               </CardTitle>
               <CardDescription>
-                Alunos com pagamentos pendentes/atrasados aptos a receber mensagem hoje
+                Apenas cobranças deste mês (pendente) e inadimplentes de meses anteriores
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -516,7 +583,7 @@ export function Cobranca() {
                 <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
                   <CheckCircle2 size={40} className="text-emerald-400"/>
                   <p className="font-medium">Nenhum envio pendente para hoje</p>
-                  <p className="text-xs">A fila é atualizada diariamente com base nos vencimentos</p>
+                  <p className="text-xs">A fila mostra apenas cobranças do mês atual e inadimplentes</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -529,13 +596,15 @@ export function Cobranca() {
                         <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wide text-muted-foreground">Valor</th>
                         <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wide text-muted-foreground">Vencimento</th>
                         <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wide text-muted-foreground">Situação</th>
+                        {schedule && <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wide text-muted-foreground">Hora estimada</th>}
                         <th className="px-4 py-3"/>
                       </tr>
                     </thead>
                     <tbody>
-                      {fila.map(item => {
+                      {fila.map((item, idx) => {
                         const atraso = item.dias_offset;
                         const isSending = enviandoIds.has(item.pagamento_id);
+                        const isInadimplente = item.pagamento_status === 'atrasado';
                         return (
                           <tr key={item.pagamento_id} className="border-b hover:bg-muted/30 transition-colors">
                             <td className="px-4 py-3">
@@ -555,10 +624,20 @@ export function Cobranca() {
                               {new Date(item.data_vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}
                             </td>
                             <td className="px-4 py-3">
-                              {atraso < 0 && <Badge className="bg-blue-50 text-blue-700 border border-blue-200 text-xs">{Math.abs(atraso)}d antes</Badge>}
-                              {atraso === 0 && <Badge className="bg-amber-50 text-amber-700 border border-amber-200 text-xs">Vence hoje</Badge>}
-                              {atraso > 0 && <Badge className="bg-red-50 text-red-700 border border-red-200 text-xs">{atraso}d em atraso</Badge>}
+                              {isInadimplente
+                                ? <Badge className="bg-red-50 text-red-700 border border-red-200 text-xs gap-1"><AlertTriangle size={10}/>{atraso}d em atraso</Badge>
+                                : atraso < 0
+                                  ? <Badge className="bg-blue-50 text-blue-700 border border-blue-200 text-xs">{Math.abs(atraso)}d antes</Badge>
+                                  : atraso === 0
+                                    ? <Badge className="bg-amber-50 text-amber-700 border border-amber-200 text-xs">Vence hoje</Badge>
+                                    : <Badge className="bg-orange-50 text-orange-700 border border-orange-200 text-xs">{atraso}d após</Badge>
+                              }
                             </td>
+                            {schedule && (
+                              <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
+                                {schedule.slots[idx]}
+                              </td>
+                            )}
                             <td className="px-4 py-3">
                               <Button
                                 size="sm"
@@ -815,14 +894,30 @@ export function Cobranca() {
                   />
                 </div>
 
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Horário de envio</label>
-                  <Input
-                    type="time"
-                    value={cobrancaCfg?.horario_envio ?? '09:00'}
-                    onChange={e => setCobrancaCfg(p => p ? { ...p, horario_envio: e.target.value } : p)}
-                    className="w-36"
-                  />
+                {/* Janela de envio */}
+                <div className="border rounded-lg p-4 bg-muted/20 space-y-3">
+                  <p className="text-sm font-medium">Janela de envio (horário comercial)</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <label className="text-xs text-muted-foreground mb-1 block">Início</label>
+                      <Input
+                        type="time"
+                        value={cobrancaCfg?.horario_inicio_envio ?? cobrancaCfg?.horario_envio ?? '09:00'}
+                        onChange={e => setCobrancaCfg(p => p ? { ...p, horario_inicio_envio: e.target.value, horario_envio: e.target.value } : p)}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-muted-foreground mb-1 block">Fim</label>
+                      <Input
+                        type="time"
+                        value={cobrancaCfg?.horario_fim_envio ?? '18:00'}
+                        onChange={e => setCobrancaCfg(p => p ? { ...p, horario_fim_envio: e.target.value } : p)}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Os envios serão distribuídos uniformemente nesta janela
+                  </p>
                 </div>
 
                 <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
@@ -894,6 +989,53 @@ export function Cobranca() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* ─── Modal: Confirmar disparo em lote ────────────────────────────── */}
+      <Dialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Play size={16}/> Confirmar disparo em lote
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-center">
+                <p className="text-2xl font-bold text-blue-700">{fila.length}</p>
+                <p className="text-xs text-blue-600">total na fila</p>
+              </div>
+              <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-center">
+                <p className="text-2xl font-bold text-red-700">{filaStats.inadimplentes}</p>
+                <p className="text-xs text-red-600">inadimplentes</p>
+              </div>
+            </div>
+            {schedule && (
+              <div className="p-3 rounded-lg bg-muted border text-sm space-y-1.5">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Clock size={13}/>
+                  <span>Janela: <strong className="text-foreground">{schedule.inicio} → {schedule.fim}</strong></span>
+                </div>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Info size={13}/>
+                  <span>1 envio a cada <strong className="text-foreground">{schedule.intervalMin} min</strong></span>
+                </div>
+                <div className="text-xs text-muted-foreground pt-1">
+                  {fila.length > 0 && `Primeiro: ${schedule.slots[0]} • Último: ${schedule.slots[schedule.slots.length - 1]}`}
+                </div>
+              </div>
+            )}
+            <p className="text-sm text-muted-foreground">
+              Os envios serão realizados sequencialmente. Apenas cobranças do mês atual e inadimplentes de meses anteriores serão incluídos.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkConfirmOpen(false)}>Cancelar</Button>
+            <Button onClick={dispararBulk} className="gap-1.5">
+              <Play size={14}/> Disparar {fila.length} envios
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ─── Modal: Envio manual ──────────────────────────────────────────── */}
       <Dialog open={!!sendModal} onOpenChange={v => !v && setSendModal(null)}>

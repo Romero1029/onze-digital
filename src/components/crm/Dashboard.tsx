@@ -1,11 +1,15 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, TrendingUp, Target, AlertTriangle, ArrowRight } from 'lucide-react';
+import {
+  Users, TrendingUp, Target, AlertTriangle, ArrowRight, DollarSign,
+  TrendingDown, Zap, BarChart3, Clock, CheckCircle2, AlertCircle,
+  ChevronRight,
+} from 'lucide-react';
 import { startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, isPast, format, differenceInHours } from 'date-fns';
 
 type TimeFilter = 'all' | 'today' | 'week' | 'month' | 'year';
@@ -39,16 +43,6 @@ function isTruthyFlag(value: unknown) {
   return value === true || String(value || '').trim().toUpperCase() === 'SIM';
 }
 
-function isPlanilhaLancamentoLead(lead: any) {
-  return !isTruthyFlag(lead.no_grupo)
-    && !isTruthyFlag(lead.grupo_oferta)
-    && !isTruthyFlag(lead.follow_up_01)
-    && !isTruthyFlag(lead.follow_up_02)
-    && !isTruthyFlag(lead.follow_up_03)
-    && !isTruthyFlag(lead.matriculado)
-    && (lead.fase === 'planilha' || !lead.fase || /^[0-9a-f-]{36}$/i.test(String(lead.fase)));
-}
-
 function getLancamentoStage(lead: any) {
   if (lead.fase === 'matricula' || isTruthyFlag(lead.matriculado)) return 'matricula';
   if (lead.fase === 'follow_up_03' || isTruthyFlag(lead.follow_up_03)) return 'followUp03';
@@ -59,21 +53,92 @@ function getLancamentoStage(lead: any) {
   return 'planilha';
 }
 
+// ─── KPI Card ────────────────────────────────────────────────────────────────
+
+function KpiCard({
+  label, value, sub, icon: Icon, accent = 'blue', trend,
+}: {
+  label: string; value: string | number; sub?: string;
+  icon: React.ElementType; accent?: 'blue' | 'green' | 'red' | 'purple' | 'amber';
+  trend?: { value: number; positive: boolean };
+}) {
+  const colors = {
+    blue:   { border: 'border-l-blue-500',   icon: 'text-blue-500',   bg: 'bg-blue-50' },
+    green:  { border: 'border-l-emerald-500', icon: 'text-emerald-500',bg: 'bg-emerald-50' },
+    red:    { border: 'border-l-red-500',     icon: 'text-red-500',    bg: 'bg-red-50' },
+    purple: { border: 'border-l-purple-500',  icon: 'text-purple-500', bg: 'bg-purple-50' },
+    amber:  { border: 'border-l-amber-500',   icon: 'text-amber-500',  bg: 'bg-amber-50' },
+  }[accent];
+
+  return (
+    <Card className={`border-l-4 ${colors.border} shadow-sm hover:shadow-md transition-shadow`}>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">{label}</p>
+            <p className="text-2xl font-bold text-foreground mt-1 leading-none">{value}</p>
+            {sub && <p className="text-xs text-muted-foreground mt-1.5 leading-snug">{sub}</p>}
+          </div>
+          <div className={`w-9 h-9 rounded-xl ${colors.bg} flex items-center justify-center flex-shrink-0`}>
+            <Icon size={18} className={colors.icon} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Funnel Bar ──────────────────────────────────────────────────────────────
+
+function FunnelBar({
+  label, count, total, isLast = false, accent = '#6366f1',
+}: {
+  label: string; count: number; total: number;
+  isLast?: boolean; accent?: string;
+}) {
+  const pct = total > 0 ? Math.max((count / total) * 100, count > 0 ? 4 : 0) : 0;
+  return (
+    <div className="flex items-center gap-3 group">
+      <div className="w-28 sm:w-36 text-right shrink-0">
+        <span className={`text-xs font-medium ${isLast ? 'text-emerald-700' : 'text-muted-foreground'}`}>{label}</span>
+      </div>
+      <div className="flex-1 flex items-center gap-2">
+        <div className="flex-1 h-5 bg-muted/40 rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{ width: `${pct}%`, backgroundColor: isLast ? '#10b981' : accent + 'cc' }}
+          />
+        </div>
+        <span className={`text-sm font-semibold w-8 text-right tabular-nums ${isLast ? 'text-emerald-700' : 'text-foreground'}`}>
+          {count}
+        </span>
+        {total > 0 && count > 0 && (
+          <span className="text-xs text-muted-foreground w-9 tabular-nums">
+            {Math.round((count / total) * 100)}%
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export function Dashboard() {
   const { user, users } = useAuth();
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [alunos, setAlunos] = useState<Aluno[]>([]);
-  const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [timeFilter, setTimeFilter]           = useState<TimeFilter>('all');
+  const [leads, setLeads]                     = useState<Lead[]>([]);
+  const [alunos, setAlunos]                   = useState<Aluno[]>([]);
+  const [pagamentos, setPagamentos]           = useState<Pagamento[]>([]);
+  const [tasks, setTasks]                     = useState<Task[]>([]);
+  const [turmas, setTurmas]                   = useState<Turma[]>([]);
   const [lancamentosAtivos, setLancamentosAtivos] = useState<any[]>([]);
-  const [lancamentosLeads, setLancamentosLeads] = useState<any[]>([]);
-  const [npaEventos, setNpaEventos] = useState<any[]>([]);
-  const [npaLeads, setNpaLeads] = useState<any[]>([]);
-  const [selectedLancamentoId, setSelectedLancamentoId] = useState<string>('');
-  const [selectedNpaId, setSelectedNpaId] = useState<string>('');
-  const [loading, setLoading] = useState(true);
+  const [lancamentosLeads, setLancamentosLeads]   = useState<any[]>([]);
+  const [npaEventos, setNpaEventos]           = useState<any[]>([]);
+  const [npaLeads, setNpaLeads]               = useState<any[]>([]);
+  const [selectedLancamentoId, setSelectedLancamentoId] = useState('');
+  const [selectedNpaId, setSelectedNpaId]     = useState('');
+  const [loading, setLoading]                 = useState(true);
   const isAdmin = user?.tipo === 'admin';
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -82,46 +147,33 @@ export function Dashboard() {
       if (showLoading) setLoading(true);
 
       const [leadsRes, alunosRes, pagamentosRes, tasksRes, turmasRes, lancamentosRes, npaEventosRes] = await Promise.all([
-        supabase.from('leads')
-          .select('id, nome, produto, etapa:status, responsavel_id, ultima_atividade, valor_potencial, created_at')
-          .order('created_at', { ascending: false }).limit(500),
-        supabase.from('alunos')
-          .select('id, nome, produto, status, data_inicio, origem_lead, created_at')
-          .order('created_at', { ascending: false }).limit(500),
-        supabase.from('pagamentos')
-          .select('id, aluno_id, valor, mes_referencia, status, data_pagamento, created_at')
-          .order('created_at', { ascending: false }).limit(1000),
-        supabase.from('tarefas')
-          .select('id, titulo, status, prioridade, responsavel_id, responsaveis, prazo, categoria, pagina, created_at')
-          .order('prazo').limit(50),
+        supabase.from('leads').select('id, nome, produto, etapa:status, responsavel_id, ultima_atividade, valor_potencial, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('alunos').select('id, nome, produto, status, data_inicio, origem_lead, created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('pagamentos').select('id, aluno_id, valor, mes_referencia, status, data_pagamento, created_at').order('created_at', { ascending: false }).limit(1000),
+        supabase.from('tarefas').select('id, titulo, status, prioridade, responsavel_id, responsaveis, prazo, categoria, pagina, created_at').order('prazo').limit(50),
         supabase.from('turmas').select('id, nome, produto, data_inicio, data_fim, status'),
         supabase.from('lancamentos').select('id, nome, ativo, created_at').order('created_at', { ascending: false }).limit(20),
         supabase.from('npa_eventos').select('id, nome, ativo').order('created_at', { ascending: false }).limit(20),
       ]);
 
-      if (leadsRes.data) setLeads(leadsRes.data as Lead[]);
-      if (alunosRes.data) setAlunos(alunosRes.data as Aluno[]);
+      if (leadsRes.data)      setLeads(leadsRes.data as Lead[]);
+      if (alunosRes.data)     setAlunos(alunosRes.data as Aluno[]);
       if (pagamentosRes.data) setPagamentos(pagamentosRes.data as Pagamento[]);
-      if (tasksRes.data) setTasks(tasksRes.data as Task[]);
-      if (turmasRes.data) setTurmas(turmasRes.data as Turma[]);
+      if (tasksRes.data)      setTasks(tasksRes.data as Task[]);
+      if (turmasRes.data)     setTurmas(turmasRes.data as Turma[]);
+
       const sortedLancamentos = lancamentosRes.data || [];
-      setLancamentosAtivos(sortedLancamentos);
       const allNpas = npaEventosRes.data || [];
+      setLancamentosAtivos(sortedLancamentos);
       setNpaEventos(allNpas);
-
-      // Define seleção inicial só na primeira carga
-      const firstLancId = sortedLancamentos[0]?.id || '';
-      const firstNpaId = allNpas[0]?.id || '';
-      setSelectedLancamentoId(prev => prev || firstLancId);
-      setSelectedNpaId(prev => prev || firstNpaId);
-
+      setSelectedLancamentoId(prev => prev || sortedLancamentos[0]?.id || '');
+      setSelectedNpaId(prev => prev || allNpas[0]?.id || '');
 
       if (showLoading) setLoading(false);
     };
 
     load(true);
 
-    // 1 único canal realtime com debounce de 2s para evitar reload em cascata
     const triggerReload = () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => load(false), 2000);
@@ -138,13 +190,9 @@ export function Dashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tarefas' }, triggerReload)
       .subscribe();
 
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      supabase.removeChannel(channel);
-    };
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); supabase.removeChannel(channel); };
   }, []);
 
-  // Carrega leads do lançamento selecionado
   useEffect(() => {
     if (!selectedLancamentoId) return;
     const load = async () => {
@@ -165,10 +213,8 @@ export function Dashboard() {
     load();
   }, [selectedLancamentoId]);
 
-  // Carrega leads do NPA selecionado
   useEffect(() => {
     if (!selectedNpaId) return;
-    const npa = npaEventos.find(n => n.id === selectedNpaId);
     const load = async () => {
       const all: any[] = [];
       let from = 0;
@@ -185,17 +231,15 @@ export function Dashboard() {
       setNpaLeads(all);
     };
     load();
-  }, [selectedNpaId, npaEventos]);
+  }, [selectedNpaId]);
 
-  const getFilterStartDate = (filter: TimeFilter): Date | null => {
+  const getFilterStartDate = (f: TimeFilter): Date | null => {
     const now = new Date();
-    switch (filter) {
-      case 'today': return startOfDay(now);
-      case 'week': return startOfWeek(now, { weekStartsOn: 1 });
-      case 'month': return startOfMonth(now);
-      case 'year': return startOfYear(now);
-      default: return null;
-    }
+    if (f === 'today') return startOfDay(now);
+    if (f === 'week')  return startOfWeek(now, { weekStartsOn: 1 });
+    if (f === 'month') return startOfMonth(now);
+    if (f === 'year')  return startOfYear(now);
+    return null;
   };
 
   const filteredLeads = useMemo(() => {
@@ -203,42 +247,54 @@ export function Dashboard() {
     if (!isAdmin) result = result.filter(l => l.responsavel_id === user?.id);
     const startDate = getFilterStartDate(timeFilter);
     if (!startDate) return result;
-    return result.filter(l => {
-      const leadDate = new Date(l.created_at);
-      return isAfter(leadDate, startDate) || leadDate.getTime() === startDate.getTime();
-    });
+    return result.filter(l => isAfter(new Date(l.created_at), startDate) || new Date(l.created_at).getTime() === startDate.getTime());
   }, [leads, timeFilter, isAdmin, user?.id]);
 
   const filteredAlunos = useMemo(() => {
-    let result = alunos;
     const startDate = getFilterStartDate(timeFilter);
-    if (!startDate) return result;
-    return result.filter(a => {
-      const alunoDate = new Date(a.created_at);
-      return isAfter(alunoDate, startDate) || alunoDate.getTime() === startDate.getTime();
-    });
+    if (!startDate) return alunos;
+    return alunos.filter(a => isAfter(new Date(a.created_at), startDate) || new Date(a.created_at).getTime() === startDate.getTime());
   }, [alunos, timeFilter]);
 
-  const receitaPotencial = useMemo(() =>
-    filteredLeads.filter(l => l.etapa !== 'matricula').reduce((sum, l) => sum + l.valor_potencial, 0),
-  [filteredLeads]);
-
-  const dinheiroNaMesa = useMemo(() => {
-    const leadsParados = filteredLeads.filter(l =>
-      ['closer','follow_up_01','follow_up_02','follow_up_03'].includes(l.etapa) &&
-      differenceInHours(new Date(), new Date(l.ultima_atividade)) > 72
-    );
-    return leadsParados.reduce((sum, l) => sum + l.valor_potencial, 0);
-  }, [filteredLeads]);
+  // ── Derived metrics ───────────────────────────────────────────────────────
 
   const alunosAtivos = filteredAlunos.filter(a => a.status === 'ativo').length;
-  const receitaRecorrente = alunosAtivos * 109.90;
+  const alunoInadimplentesIds = new Set(
+    pagamentos.filter(p => p.status === 'atrasado').map(p => p.aluno_id)
+  );
+  const inadimplenteCount = alunos.filter(a => a.status === 'ativo' && alunoInadimplentesIds.has(a.id)).length;
 
-  const ltvPotencial = useMemo(() => {
-    const alunosAtivosPsicanalise = filteredAlunos.filter(a => a.status === 'ativo' && a.produto === 'psicanalise');
-    const receitaJaRecebida = pagamentos.filter(p => p.status === 'pago').reduce((sum, p) => sum + p.valor, 0);
-    return (alunosAtivosPsicanalise.length * 1538.60) + receitaJaRecebida;
+  const receitaRecorrente = useMemo(() => {
+    const ativos = filteredAlunos.filter(a => a.status === 'ativo');
+    const total = pagamentos.filter(p => p.status === 'pago' && ativos.some(a => a.id === p.aluno_id)).reduce((s, p) => s + p.valor, 0);
+    return total;
   }, [filteredAlunos, pagamentos]);
+
+  const receitaPotencial = useMemo(() =>
+    filteredLeads.filter(l => l.etapa !== 'matricula').reduce((s, l) => s + l.valor_potencial, 0),
+  [filteredLeads]);
+
+  const leadsParados = useMemo(() =>
+    filteredLeads.filter(l =>
+      ['closer', 'follow_up_01', 'follow_up_02', 'follow_up_03'].includes(l.etapa) &&
+      differenceInHours(new Date(), new Date(l.ultima_atividade)) > 72
+    ),
+  [filteredLeads]);
+
+  const totalMatriculas = filteredLeads.filter(l => l.etapa === 'matricula').length;
+  const txConversaoGeral = filteredLeads.length > 0
+    ? Math.round((totalMatriculas / filteredLeads.length) * 100)
+    : 0;
+
+  const mesAtualStr = new Date().toISOString().slice(0, 7);
+  const receitaMesAtual = pagamentos
+    .filter(p => p.status === 'pago' && p.mes_referencia?.startsWith(mesAtualStr))
+    .reduce((s, p) => s + p.valor, 0);
+
+  const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+  const fmtK = (v: number) => v >= 1000 ? `R$ ${(v / 1000).toFixed(1)}k` : fmt(v);
+
+  // ── Funnel data ───────────────────────────────────────────────────────────
 
   const getFunilData = (produto: 'direto' | 'lancamento' | 'npa') => {
     if (produto === 'lancamento') {
@@ -253,7 +309,7 @@ export function Dashboard() {
         matricula: ll.filter(l => getLancamentoStage(l) === 'matricula').length,
       };
     }
-    if (produto === 'npa' && selectedNpaId) {
+    if (produto === 'npa') {
       const nl = npaLeads.filter(l => l.npa_evento_id === selectedNpaId);
       return {
         novo: nl.filter(l => l.fase === 'novo').length,
@@ -267,10 +323,8 @@ export function Dashboard() {
         followUp03: nl.filter(l => l.fase === 'follow_up_03').length,
         matricula: nl.filter(l => l.fase === 'matricula').length,
       };
-    } else if (produto === 'npa') {
-      return { novo: 0, ingressoPago: 0, noGrupo: 0, confirmado: 0, evento: 0, closer: 0, followUp01: 0, followUp02: 0, followUp03: 0, matricula: 0 };
     }
-    const pl = filteredLeads.filter(l => l.produto === produto);
+    const pl = filteredLeads.filter(l => l.produto === 'direto');
     return {
       novo: pl.filter(l => l.etapa === 'novo').length,
       sdr: pl.filter(l => l.etapa === 'sdr').length,
@@ -282,44 +336,40 @@ export function Dashboard() {
     };
   };
 
-  const getConversaoPercent = (atual: number, total: number) => total === 0 ? 0 : Math.round((atual / total) * 100);
+  // ── Team stats (dynamic from users context) ───────────────────────────────
 
-  const colaboradores = [
-    { id: 'cac2f265-196c-4a40-98e4-55d661ddd648', nome: 'Vinicius', cargo: 'Relacionamento com Leads' },
-    { id: '5ef08f96-4813-44e2-99ae-ddb289d72566', nome: 'Pedro', cargo: 'Tráfego/Sites' },
-    { id: 'eb50adf0-14c8-4806-bd53-6c3258e6e045', nome: 'Igor', cargo: 'Automações/Design' },
-    { id: 'rodrygo', nome: 'Rodrygo', cargo: 'Conteúdo/Aulas' },
-  ];
+  const teamMembers = useMemo(() =>
+    users.filter(u => u.ativo && u.tipo !== 'admin'),
+  [users]);
 
   const getColaboradorStats = (colaboradorId: string) => {
-    if (colaboradorId === 'cac2f265-196c-4a40-98e4-55d661ddd648') {
-      const colabLeads = filteredLeads.filter(l => l.responsavel_id === colaboradorId);
-      const matriculas = colabLeads.filter(l => l.etapa === 'matricula').length;
-      return { leads: colabLeads.length, matriculas, conversao: colabLeads.length > 0 ? Math.round((matriculas / colabLeads.length) * 100) : 0 };
-    }
-    const colabTarefas = tasks.filter(t => t.responsavel_id === colaboradorId || (t.responsaveis && t.responsaveis.includes(colaboradorId)));
+    const colabLeads = filteredLeads.filter(l => l.responsavel_id === colaboradorId);
+    const matriculas = colabLeads.filter(l => l.etapa === 'matricula').length;
+    const conversao  = colabLeads.length > 0 ? Math.round((matriculas / colabLeads.length) * 100) : 0;
+    const colabTasks = tasks.filter(t => t.responsavel_id === colaboradorId || (t.responsaveis?.includes(colaboradorId)));
     return {
-      tarefasPendentes: colabTarefas.filter(t => t.status === 'a_fazer').length,
-      tarefasEmAndamento: colabTarefas.filter(t => t.status === 'em_andamento').length,
-      proximaTarefa: colabTarefas.filter(t => t.status !== 'concluido').sort((a, b) => new Date(a.prazo || '9999').getTime() - new Date(b.prazo || '9999').getTime())[0],
+      leads: colabLeads.length,
+      matriculas,
+      conversao,
+      tarefasPendentes:   colabTasks.filter(t => t.status === 'a_fazer').length,
+      tarefasEmAndamento: colabTasks.filter(t => t.status === 'em_andamento').length,
+      proximaTarefa: colabTasks.filter(t => t.status !== 'concluido').sort((a, b) => new Date(a.prazo || '9999').getTime() - new Date(b.prazo || '9999').getTime())[0],
     };
   };
 
-  const tarefasCriticas = tasks.filter(t => t.status !== 'concluido' && t.prazo && isPast(new Date(t.prazo))).slice(0, 3);
-  const getSaudeFinanceira = (produto: 'psicanalise' | 'numerologia') => {
-    const produtoAlunos = filteredAlunos.filter(a => a.produto === produto && a.status === 'ativo');
-    const receitaRecorrente = produto === 'psicanalise' ? produtoAlunos.length * 109.90 : 0;
-    const alunosIds = produtoAlunos.map(a => a.id);
-    const receitaRealizadaMes = pagamentos
-      .filter(p => p.status === 'pago' && alunosIds.includes(p.aluno_id) && new Date(p.created_at).getMonth() === new Date().getMonth())
-      .reduce((sum, p) => sum + p.valor, 0);
-    const inadimplentes = produtoAlunos.filter(a => pagamentos.filter(p => p.aluno_id === a.id).some(p => p.status === 'atrasado')).length;
-    const proximaTurma = turmas.filter(t => t.produto === produto && t.status === 'ativa').sort((a, b) => new Date(a.data_inicio || '').getTime() - new Date(b.data_inicio || '').getTime())[0];
-    const leadsProntos = filteredLeads.filter(l => l.produto === produto && ['matricula','follow_up_03'].includes(l.etapa)).length;
-    return { receitaRecorrente, inadimplentes, receitaPrevistaMes: receitaRecorrente, receitaRealizadaMes, proximaTurma, leadsProntos };
-  };
+  const tarefasCriticas = tasks.filter(t => t.status !== 'concluido' && t.prazo && isPast(new Date(t.prazo))).slice(0, 4);
 
-  const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+  // ── Financial health ──────────────────────────────────────────────────────
+
+  const getSaudeFinanceira = (produto: 'psicanalise' | 'numerologia') => {
+    const produtoAlunos = alunos.filter(a => a.produto === produto && a.status === 'ativo');
+    const alunosIds = produtoAlunos.map(a => a.id);
+    const receitaMes = pagamentos.filter(p => p.status === 'pago' && alunosIds.includes(p.aluno_id) && p.mes_referencia?.startsWith(mesAtualStr)).reduce((s, p) => s + p.valor, 0);
+    const inadimplentes = produtoAlunos.filter(a => pagamentos.some(p => p.aluno_id === a.id && p.status === 'atrasado')).length;
+    const txInadimplencia = produtoAlunos.length > 0 ? Math.round((inadimplentes / produtoAlunos.length) * 100) : 0;
+    const proximaTurma = turmas.filter(t => t.produto === produto && t.status === 'ativa').sort((a, b) => new Date(a.data_inicio || '').getTime() - new Date(b.data_inicio || '').getTime())[0];
+    return { ativos: produtoAlunos.length, receitaMes, inadimplentes, txInadimplencia, proximaTurma };
+  };
 
   if (loading) return (
     <div className="p-4 lg:p-6 space-y-6">
@@ -329,15 +379,35 @@ export function Dashboard() {
     </div>
   );
 
+  const funnelConfigs = [
+    {
+      titulo: 'Lead Direto', produto: 'direto' as const, accent: '#3b82f6',
+      etapas: [['Novo','novo'],['SDR','sdr'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']],
+      total: filteredLeads.filter(l => l.produto === 'direto').length,
+    },
+    {
+      titulo: 'Lançamento', produto: 'lancamento' as const, accent: '#8b5cf6', isSelect: true,
+      etapas: [['Planilha','planilha'],['Grupo Lançamento','grupoLancamento'],['Grupo Oferta','grupoOferta'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']],
+      total: lancamentosLeads.filter(l => l.lancamento_id === selectedLancamentoId).length,
+    },
+    {
+      titulo: 'NPA', produto: 'npa' as const, accent: '#f59e0b', isSelectNpa: true,
+      etapas: [['Novo','novo'],['Ingresso Pago','ingressoPago'],['No Grupo','noGrupo'],['Confirmado','confirmado'],['Evento','evento'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']],
+      total: npaLeads.filter(l => l.npa_evento_id === selectedNpaId).length,
+    },
+  ];
+
   return (
-    <div className="p-4 lg:p-6 space-y-6 pb-20 lg:pb-6 overflow-y-auto h-full bg-white">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border pb-4">
+    <div className="p-4 lg:p-6 space-y-6 pb-20 lg:pb-6 overflow-y-auto h-full">
+
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">{isAdmin ? 'Visão executiva completa' : 'Meus leads'}</p>
+          <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">{isAdmin ? 'Visão executiva · dados em tempo real' : `Meus leads · ${filteredLeads.length} ativos`}</p>
         </div>
         <Select value={timeFilter} onValueChange={v => setTimeFilter(v as TimeFilter)}>
-          <SelectTrigger className="w-[160px]"><SelectValue placeholder="Período" /></SelectTrigger>
+          <SelectTrigger className="w-[150px]"><SelectValue placeholder="Período" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todo período</SelectItem>
             <SelectItem value="today">Hoje</SelectItem>
@@ -348,219 +418,274 @@ export function Dashboard() {
         </Select>
       </div>
 
+      {/* ── KPI Cards ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="p-4 border hover:shadow-md transition-all bg-green-50 border-green-200">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-green-700">Receita Potencial no Funil</p>
-              <Target className="h-4 w-4 text-green-600" />
-            </div>
-            <p className="text-2xl font-bold text-green-800">{fmt(receitaPotencial)}</p>
-            <p className="text-[11px] text-green-600">{filteredLeads.filter(l => l.etapa !== 'matricula').length} leads × R$109,90/mês</p>
-          </div>
-        </Card>
-        <Card className="p-4 border hover:shadow-md transition-all bg-red-50 border-red-200">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-red-700">Dinheiro na Mesa</p>
-              <AlertTriangle className="h-4 w-4 text-red-600" />
-            </div>
-            <p className="text-2xl font-bold text-red-800">{fmt(dinheiroNaMesa)}</p>
-            <p className="text-[11px] text-red-600">{filteredLeads.filter(l => ['closer','follow_up_01','follow_up_02','follow_up_03'].includes(l.etapa) && differenceInHours(new Date(), new Date(l.ultima_atividade)) > 72).length} leads parados</p>
-          </div>
-        </Card>
-        <Card className="p-4 border hover:shadow-md transition-all bg-blue-50 border-blue-200">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-blue-700">Alunos Ativos Agora</p>
-              <Users className="h-4 w-4 text-blue-600" />
-            </div>
-            <p className="text-2xl font-bold text-blue-800">{alunosAtivos}</p>
-            <p className="text-[11px] text-blue-600">Receita recorrente: {fmt(receitaRecorrente)}</p>
-          </div>
-        </Card>
-        <Card className="p-4 border hover:shadow-md transition-all bg-purple-50 border-purple-200">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-purple-700">LTV Potencial</p>
-              <TrendingUp className="h-4 w-4 text-purple-600" />
-            </div>
-            <p className="text-2xl font-bold text-purple-800">{fmt(ltvPotencial)}</p>
-            <p className="text-[11px] text-purple-600">Projeção 14 meses</p>
-          </div>
-        </Card>
+        <KpiCard
+          label="Receita do Mês"
+          value={fmtK(receitaMesAtual)}
+          sub={`Total pago em ${format(new Date(), 'MMM/yy')}`}
+          icon={DollarSign}
+          accent="green"
+        />
+        <KpiCard
+          label="Potencial no Funil"
+          value={fmtK(receitaPotencial)}
+          sub={`${filteredLeads.filter(l => l.etapa !== 'matricula').length} leads ainda não convertidos`}
+          icon={Target}
+          accent="blue"
+        />
+        <KpiCard
+          label="Alunos Ativos"
+          value={alunosAtivos}
+          sub={inadimplenteCount > 0 ? `${inadimplenteCount} inadimplentes` : 'Sem inadimplência'}
+          icon={Users}
+          accent={inadimplenteCount > 0 ? 'red' : 'green'}
+        />
+        <KpiCard
+          label="Conversão Geral"
+          value={`${txConversaoGeral}%`}
+          sub={`${totalMatriculas} matrículas de ${filteredLeads.length} leads`}
+          icon={TrendingUp}
+          accent="purple"
+        />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {[
-          { titulo: 'Lead Direto', cor: 'text-blue-700', produto: 'direto' as const },
-          { titulo: 'Lançamento', cor: 'text-purple-700', produto: 'lancamento' as const },
-          { titulo: 'NPA', cor: 'text-orange-700', produto: 'npa' as const },
-        ].map(({ titulo, cor, produto }) => {
+      {/* ── Alert: leads parados ──────────────────────────────────────────── */}
+      {leadsParados.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50/70">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+              <div className="flex-1 text-sm text-amber-800">
+                <span className="font-semibold">{leadsParados.length} leads parados</span> por mais de 72h —{' '}
+                <span className="font-semibold">{fmtK(leadsParados.reduce((s, l) => s + l.valor_potencial, 0))}</span> em risco
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Funnels ───────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {funnelConfigs.map(({ titulo, produto, accent, etapas, total, isSelect, isSelectNpa }) => {
           const funil = getFunilData(produto);
-          const etapas = produto === 'lancamento'
-            ? [['Planilha','planilha'],['Grupo Lançamento','grupoLancamento'],['Grupo Oferta','grupoOferta'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']]
-            : produto === 'npa'
-            ? [['Novo','novo'],['Ingresso Pago','ingressoPago'],['No Grupo','noGrupo'],['Confirmado','confirmado'],['Evento','evento'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']]
-            : [['Novo','novo'],['SDR','sdr'],['Closer','closer'],['Follow-up 01','followUp01'],['Follow-up 02','followUp02'],['Follow-up 03','followUp03'],['Matrícula','matricula']];
-          const total = produto === 'lancamento'
-            ? lancamentosLeads.filter(l => l.lancamento_id === selectedLancamentoId).length
-            : produto === 'npa' ? npaLeads.filter(l => l.npa_evento_id === selectedNpaId).length
-            : filteredLeads.filter(l => l.produto === 'direto').length;
+          const matriculaCount = (funil as any)['matricula'] ?? 0;
+          const txConv = total > 0 ? Math.round((matriculaCount / total) * 100) : 0;
           return (
-            <Card key={produto} className="p-6 border">
-              {produto === 'lancamento' ? (
-                <Select value={selectedLancamentoId} onValueChange={setSelectedLancamentoId}>
-                  <SelectTrigger className={`h-8 text-sm font-semibold mb-4 ${cor} border-0 shadow-none px-0 focus:ring-0`}>
-                    <SelectValue placeholder="Selecionar lançamento" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {lancamentosAtivos.map(l => (
-                      <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : produto === 'npa' ? (
-                <Select value={selectedNpaId} onValueChange={setSelectedNpaId}>
-                  <SelectTrigger className={`h-8 text-sm font-semibold mb-4 ${cor} border-0 shadow-none px-0 focus:ring-0`}>
-                    <SelectValue placeholder="Selecionar NPA" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {npaEventos.map(n => (
-                      <SelectItem key={n.id} value={n.id}>{n.nome}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <h3 className={`font-semibold mb-4 ${cor}`}>{titulo}</h3>
-              )}
-              <div className="space-y-3">
+            <Card key={produto} className="flex flex-col">
+              <CardHeader className="pb-3">
+                {isSelect ? (
+                  <Select value={selectedLancamentoId} onValueChange={setSelectedLancamentoId}>
+                    <SelectTrigger className="h-8 text-sm font-semibold border-0 shadow-none px-0 focus:ring-0 -ml-0.5">
+                      <SelectValue placeholder="Selecionar lançamento" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {lancamentosAtivos.map(l => <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : isSelectNpa ? (
+                  <Select value={selectedNpaId} onValueChange={setSelectedNpaId}>
+                    <SelectTrigger className="h-8 text-sm font-semibold border-0 shadow-none px-0 focus:ring-0 -ml-0.5">
+                      <SelectValue placeholder="Selecionar NPA" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {npaEventos.map(n => <SelectItem key={n.id} value={n.id}>{n.nome}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <CardTitle className="text-sm font-semibold">{titulo}</CardTitle>
+                )}
+                <div className="flex items-center gap-3 mt-1">
+                  <Badge variant="outline" className="text-xs">{total} leads</Badge>
+                  {txConv > 0 && (
+                    <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
+                      {txConv}% conversão
+                    </Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 space-y-2.5">
                 {etapas.map(([label, key], i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <span className="text-sm">{label}</span>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{(funil as any)[key] ?? 0}</Badge>
-                      {total > 0 && <><ArrowRight className="h-3 w-3 text-muted-foreground" /><span className="text-xs text-muted-foreground">{getConversaoPercent((funil as any)[key] ?? 0, total)}%</span></>}
-                    </div>
-                  </div>
+                  <FunnelBar
+                    key={key}
+                    label={label}
+                    count={(funil as any)[key] ?? 0}
+                    total={total}
+                    isLast={i === etapas.length - 1}
+                    accent={accent}
+                  />
                 ))}
-              </div>
-              <div className="mt-4 pt-4 border-t">
-                <p className="text-sm text-muted-foreground">Total: {total}</p>
-              </div>
+              </CardContent>
             </Card>
           );
         })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="p-6 border">
-          <h3 className="font-600 mb-4 text-gray-800">Performance do Time</h3>
-          <div className="space-y-2">
-            {colaboradores.map((colab, idx) => {
-              const stats = getColaboradorStats(colab.id);
-              const colors = [
-                { bg:'bg-blue-50',border:'border-blue-100',dot:'bg-blue-400',text:'text-blue-700' },
-                { bg:'bg-amber-50',border:'border-amber-100',dot:'bg-amber-400',text:'text-amber-700' },
-                { bg:'bg-purple-50',border:'border-purple-100',dot:'bg-purple-400',text:'text-purple-700' },
-                { bg:'bg-cyan-50',border:'border-cyan-100',dot:'bg-cyan-400',text:'text-cyan-700' },
-              ];
-              const c = colors[idx] || colors[0];
-              const isVinicius = colab.id === 'cac2f265-196c-4a40-98e4-55d661ddd648';
+      {/* ── Team + Financial ──────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+        {/* Team performance */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Users size={15} className="text-muted-foreground" /> Performance do Time
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {users.filter(u => u.ativo).map((u, idx) => {
+              const stats = getColaboradorStats(u.id);
+              const hasLeads = stats.leads > 0;
               return (
-                <div key={colab.id} className={`flex items-center justify-between px-4 py-3 rounded-xl border ${c.bg} ${c.border}`}>
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full ${c.dot}`} />
-                    <div>
-                      <p className="text-sm font-semibold text-gray-800">{colab.nome}</p>
-                      <p className="text-xs text-gray-400">{colab.cargo}</p>
-                    </div>
+                <div
+                  key={u.id}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl border bg-muted/20 hover:bg-muted/40 transition-colors"
+                >
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                    style={{ backgroundColor: u.cor }}
+                  >
+                    {u.nome.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
                   </div>
-                  {isVinicius ? (
-                    <div className="flex items-center gap-4 text-right">
-                      <div><p className="text-base font-bold text-gray-800">{stats.leads}</p><p className="text-xs text-gray-400">Leads</p></div>
-                      <div><p className="text-base font-bold text-green-600">{stats.matriculas}</p><p className="text-xs text-gray-400">Matrículas</p></div>
-                      <div><p className={`text-base font-bold ${c.text}`}>{stats.conversao}%</p><p className="text-xs text-gray-400">Conversão</p></div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground leading-none truncate">{u.nome}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 capitalize">{u.tipo}</p>
+                  </div>
+                  {hasLeads ? (
+                    <div className="flex items-center gap-3 text-right shrink-0">
+                      <div>
+                        <p className="text-sm font-bold tabular-nums">{stats.leads}</p>
+                        <p className="text-xs text-muted-foreground">Leads</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-emerald-600 tabular-nums">{stats.matriculas}</p>
+                        <p className="text-xs text-muted-foreground">Conv.</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-primary tabular-nums">{stats.conversao}%</p>
+                        <p className="text-xs text-muted-foreground">Taxa</p>
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-4 text-right">
-                      <div><p className="text-base font-bold text-amber-600">{stats.tarefasPendentes}</p><p className="text-xs text-gray-400">A Fazer</p></div>
-                      <div><p className="text-base font-bold text-orange-500">{stats.tarefasEmAndamento}</p><p className="text-xs text-gray-400">Em Andamento</p></div>
-                      <div className="text-right max-w-[120px]">
-                        {stats.proximaTarefa ? (
-                          <><p className="text-xs font-medium text-gray-700 truncate">{stats.proximaTarefa.titulo}</p><p className="text-xs text-gray-400">{stats.proximaTarefa.prazo ? format(new Date(stats.proximaTarefa.prazo), 'dd/MM') : '—'}</p></>
-                        ) : <p className="text-xs text-gray-300">Sem tarefas</p>}
+                    <div className="flex items-center gap-3 text-right shrink-0">
+                      <div>
+                        <p className="text-sm font-bold text-amber-600 tabular-nums">{stats.tarefasPendentes}</p>
+                        <p className="text-xs text-muted-foreground">A fazer</p>
                       </div>
+                      <div>
+                        <p className="text-sm font-bold text-orange-500 tabular-nums">{stats.tarefasEmAndamento}</p>
+                        <p className="text-xs text-muted-foreground">Em andamento</p>
+                      </div>
+                      {stats.proximaTarefa && (
+                        <div className="text-right max-w-[100px]">
+                          <p className="text-xs font-medium text-foreground truncate">{stats.proximaTarefa.titulo}</p>
+                          <p className="text-xs text-muted-foreground">{stats.proximaTarefa.prazo ? format(new Date(stats.proximaTarefa.prazo), 'dd/MM') : '—'}</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               );
             })}
-          </div>
-          {tarefasCriticas.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-red-100">
-              <p className="text-xs font-semibold text-red-600 mb-2 uppercase tracking-wide">⚠ Tarefas Atrasadas</p>
-              <div className="space-y-1.5">
-                {tarefasCriticas.map(task => (
-                  <div key={task.id} className="flex items-center justify-between px-3 py-2 bg-red-50 rounded-lg border border-red-100">
-                    <p className="text-sm text-gray-700 truncate flex-1">{task.titulo}</p>
-                    <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                      {task.prazo && <p className="text-xs text-red-500">{format(new Date(task.prazo), 'dd/MM')}</p>}
-                      <Badge variant="destructive" className="text-xs px-1.5">{task.prioridade}</Badge>
+
+            {/* Critical tasks */}
+            {tarefasCriticas.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-red-100">
+                <p className="text-xs font-semibold text-red-600 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+                  <AlertCircle size={11}/> Tarefas atrasadas
+                </p>
+                <div className="space-y-1.5">
+                  {tarefasCriticas.map(task => (
+                    <div key={task.id} className="flex items-center justify-between px-3 py-2 bg-red-50 rounded-lg border border-red-100">
+                      <p className="text-sm text-foreground truncate flex-1">{task.titulo}</p>
+                      <div className="flex items-center gap-2 ml-2 shrink-0">
+                        {task.prazo && <p className="text-xs text-red-500 font-medium">{format(new Date(task.prazo), 'dd/MM')}</p>}
+                        <Badge variant="destructive" className="text-xs px-1.5">{task.prioridade}</Badge>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </CardContent>
         </Card>
 
-        <Card className="p-6 border">
-          <h3 className="font-600 mb-4">Saúde Financeira</h3>
-          <Tabs defaultValue="psicanalise" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="psicanalise">Psicanálise</TabsTrigger>
-              <TabsTrigger value="numerologia">Numerologia</TabsTrigger>
-            </TabsList>
-            {(['psicanalise', 'numerologia'] as const).map(prod => {
-              const saude = getSaudeFinanceira(prod);
-              return (
-                <TabsContent key={prod} value={prod} className="space-y-4 mt-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 bg-blue-50 rounded border border-blue-200">
-                      <p className="text-xs text-blue-700">{prod === 'psicanalise' ? 'Receita Recorrente Mensal' : 'Receita este Mês (Eventos)'}</p>
-                      <p className="text-lg font-bold text-blue-800">{fmt(prod === 'psicanalise' ? saude.receitaRecorrente : saude.receitaRealizadaMes)}</p>
-                    </div>
-                    <div className="p-3 bg-red-50 rounded border border-red-200">
-                      <p className="text-xs text-red-700">Inadimplência</p>
-                      <p className="text-lg font-bold text-red-800">{saude.inadimplentes} alunos</p>
-                    </div>
-                  </div>
-                  {prod === 'psicanalise' && (
-                    <div className="p-3 bg-green-50 rounded border border-green-200">
-                      <p className="text-xs text-green-700">Receita vs Previsão (Mês Atual)</p>
-                      <div className="flex items-center justify-between mt-1">
-                        <span className="text-sm">Realizado: {fmt(saude.receitaRealizadaMes)}</span>
-                        <span className="text-sm">Previsto: {fmt(saude.receitaPrevistaMes)}</span>
+        {/* Financial health */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <BarChart3 size={15} className="text-muted-foreground" /> Saúde Financeira
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Tabs defaultValue="psicanalise">
+              <TabsList className="grid w-full grid-cols-2 mb-4">
+                <TabsTrigger value="psicanalise">Psicanálise</TabsTrigger>
+                <TabsTrigger value="numerologia">Numerologia</TabsTrigger>
+              </TabsList>
+              {(['psicanalise', 'numerologia'] as const).map(prod => {
+                const saude = getSaudeFinanceira(prod);
+                const txText = saude.txInadimplencia;
+                return (
+                  <TabsContent key={prod} value={prod} className="space-y-3 mt-0">
+                    {/* Stats row */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="text-center p-3 rounded-xl bg-blue-50 border border-blue-100">
+                        <p className="text-2xl font-bold text-blue-700">{saude.ativos}</p>
+                        <p className="text-xs text-blue-600 mt-0.5">Ativos</p>
                       </div>
-                      <div className="w-full bg-green-200 rounded-full h-2 mt-2">
-                        <div className="bg-green-600 h-2 rounded-full" style={{ width: `${Math.min((saude.receitaRealizadaMes / (saude.receitaPrevistaMes || 1)) * 100, 100)}%` }}></div>
+                      <div className="text-center p-3 rounded-xl bg-emerald-50 border border-emerald-100">
+                        <p className="text-lg font-bold text-emerald-700 leading-tight">{fmtK(saude.receitaMes)}</p>
+                        <p className="text-xs text-emerald-600 mt-0.5">Recebido mês</p>
+                      </div>
+                      <div className={`text-center p-3 rounded-xl border ${saude.inadimplentes > 0 ? 'bg-red-50 border-red-100' : 'bg-muted border-border'}`}>
+                        <p className={`text-2xl font-bold ${saude.inadimplentes > 0 ? 'text-red-700' : 'text-muted-foreground'}`}>{saude.inadimplentes}</p>
+                        <p className={`text-xs mt-0.5 ${saude.inadimplentes > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>Inadimpl.</p>
                       </div>
                     </div>
-                  )}
-                  <div className="p-3 bg-purple-50 rounded border border-purple-200">
-                    <p className="text-xs text-purple-700">Próxima Turma{prod === 'numerologia' ? '/Evento' : ''}</p>
+
+                    {/* Inadimplência bar */}
+                    {saude.ativos > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs text-muted-foreground">Taxa de inadimplência</span>
+                          <span className={`text-xs font-semibold ${txText > 10 ? 'text-red-600' : txText > 5 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {txText}%
+                          </span>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${txText > 10 ? 'bg-red-500' : txText > 5 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                            style={{ width: `${Math.min(txText, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Next class */}
                     {saude.proximaTurma ? (
-                      <div className="mt-1">
-                        <p className="text-sm font-500">{saude.proximaTurma.nome}</p>
-                        <p className="text-xs text-purple-600">{format(new Date(saude.proximaTurma.data_inicio || ''), 'dd/MM/yyyy')} • {saude.leadsProntos} leads prontos</p>
+                      <div className="flex items-center gap-3 p-3 rounded-xl bg-purple-50 border border-purple-100">
+                        <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center shrink-0">
+                          <Zap size={14} className="text-purple-600" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-purple-700 truncate">{saude.proximaTurma.nome}</p>
+                          <p className="text-xs text-purple-500">
+                            {saude.proximaTurma.data_inicio
+                              ? format(new Date(saude.proximaTurma.data_inicio), 'dd/MM/yyyy')
+                              : 'Data a definir'}
+                          </p>
+                        </div>
                       </div>
-                    ) : <p className="text-sm text-muted-foreground">Nenhuma turma ativa</p>}
-                  </div>
-                </TabsContent>
-              );
-            })}
-          </Tabs>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-muted border text-xs text-muted-foreground text-center">
+                        Nenhuma turma ativa
+                      </div>
+                    )}
+                  </TabsContent>
+                );
+              })}
+            </Tabs>
+          </CardContent>
         </Card>
       </div>
     </div>
