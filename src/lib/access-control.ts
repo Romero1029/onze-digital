@@ -24,7 +24,7 @@ export interface AccessPermissions {
 }
 
 export type AppView =
-  | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'balanco' | 'rodrygo'
+  | 'dashboard' | 'pipeline' | 'npa_overview' | 'chat' | 'sheets' | 'financeiro' | 'financeiro_cfo' | 'balanco' | 'rodrygo'
   | 'lancamentos_30' | 'lancamentos_31' | 'lancamentos_32'
   | 'team' | 'settings' | 'cobranca'
   | 'operacoes_tarefas' | 'operacoes_calendario_geral' | 'operacoes_calendario_conteudo'
@@ -163,6 +163,7 @@ export function canAccessView(view: string, permissions: AccessPermissions, isAd
     chat: permissions.canViewChat,
     sheets: permissions.canViewSheets,
     financeiro: permissions.canViewFinanceiro,
+    financeiro_cfo: permissions.canViewFinanceiro,
     balanco: permissions.canViewBalanco,
     cobranca: permissions.canViewCobranca,
     rodrygo: permissions.canViewRodrygo,

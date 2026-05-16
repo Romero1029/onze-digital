@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Kanban, Settings, UserCog, FileSpreadsheet,
   MessageCircle, Rocket, BarChart3, CheckSquare, ChevronDown,
   ChevronLeft, ChevronRight, Plus, Brain, ListTodo, Scale,
-  GraduationCap, GripVertical, Pencil, Check, MessageSquare,
+  GraduationCap, GripVertical, Pencil, Check, MessageSquare, TrendingUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +37,7 @@ const BASE_MENU: MenuItem[] = [
   { key: 'chat', label: 'Chat', icon: MessageCircle },
   { key: 'sheets', label: 'Leads Sheets', icon: FileSpreadsheet },
   { key: 'financeiro', label: 'Financeiro', icon: BarChart3 },
+  { key: 'financeiro_cfo', label: 'Análise CFO', icon: TrendingUp },
   { key: 'balanco', label: 'Balanco', icon: Scale },
   { key: 'cobranca', label: 'Cobrança', icon: MessageSquare },
   { key: 'team', label: 'Equipe', icon: UserCog, adminOnly: true },

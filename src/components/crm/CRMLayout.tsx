@@ -21,6 +21,7 @@ const Operacoes        = lazy(() => import('./Operacoes').then(m => ({ default: 
 const MapaMental       = lazy(() => import('./MapaMental').then(m => ({ default: m.MapaMental })));
 const Financeiro       = lazy(() => import('./Financeiro').then(m => ({ default: m.Financeiro })));
 const Balanco          = lazy(() => import('./Balanco').then(m => ({ default: m.Balanco })));
+const FinanceiroCFO    = lazy(() => import('./FinanceiroCFO').then(m => ({ default: m.FinanceiroCFO })));
 const Cobranca         = lazy(() => import('./Cobranca').then(m => ({ default: m.Cobranca })));
 const Rodrygo          = lazy(() => import('./Rodrygo').then(m => ({ default: m.Rodrygo })));
 const Pedagogico       = lazy(() => import('../pedagogico/Pedagogico').then(m => ({ default: m.Pedagogico })));
@@ -217,6 +218,7 @@ export function CRMLayout() {
       case 'chat': return <Chat />;
       case 'sheets': return <SheetsLeads />;
       case 'financeiro': return <Financeiro />;
+      case 'financeiro_cfo': return <FinanceiroCFO />;
       case 'balanco': return <Balanco />;
       case 'cobranca': return permissions.canViewCobranca || isAdmin ? <Cobranca /> : <RestrictedView />;
       case 'rodrygo': return <Rodrygo />;
